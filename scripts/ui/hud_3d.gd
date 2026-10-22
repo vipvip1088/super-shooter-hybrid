@@ -10,148 +10,150 @@ signal dash_pressed
 signal ult_pressed
 signal weapon_next
 signal weapon_prev
-signal perk_chosen(perk_key: String)
+signal perk_chosen(key: String)
 signal shop_buy(weapon_id: String)
+signal empty_clicked
 
-# ── Touch state ────────────────────────────────────────────────────────────────
-var _left_id:   int = -1
-var _right_id:  int = -1
-var _left_orig: Vector2
-var _left_cur:  Vector2
-var _right_orig: Vector2
-var _right_cur:  Vector2
-const STICK_RADIUS := 90.0
-const DEAD_ZONE    := 12.0
-var _fire_held: bool = false
+# ── Touch IDs ──────────────────────────────────────────────────────────────────
+var _left_id:  int = -1
+var _right_id: int = -1
+var _left_orig:  Vector2
+var _left_cur:   Vector2
+var _right_prev: Vector2
+var _button_touches: Dictionary = {}  # touch_index → button_name
+const STICK_RADIUS := 88.0
 
-# ── Game state (updated by GM) ─────────────────────────────────────────────────
-var hp: float = 100.0
-var max_hp: float = 100.0
-var shield: float = 0.0
+# ── Game state (set by GM each frame) ─────────────────────────────────────────
+var hp: float       = 100.0
+var max_hp: float   = 100.0
+var shield: float   = 0.0
 var max_shield: float = 50.0
-var ammo: int = 30
-var max_ammo: int = 30
-var is_reloading: bool = false
+var ammo: int       = 30
+var max_ammo: int   = 30
+var is_reloading: bool  = false
 var reload_progress: float = 0.0
-var wave: int = 0
-var score: int = 0
+var wave: int   = 1
+var score: int  = 0
+var combo: int  = 0
 var enemy_count: int = 0
-var dash_cd: float = 0.0
-var ult_cd: float = 0.0
+var dash_cd: float  = 0.0
+var ult_cd: float   = 0.0
 var ult_max_cd: float = 30.0
-var xp: int = 0
-var xp_to_next: int = 100
-var level: int = 1
-var money: int = 0
+var p_xp: int       = 0
+var p_xp_next: int  = 100
+var p_level: int    = 1
+var money: int      = 0
 var current_weapon: String = "ar"
 var zone_warning: bool = false
-var kill_feed: Array = []  # strings, max 4
-var kill_feed_timers: Array = []
 
-# ── Overlay state ──────────────────────────────────────────────────────────────
-var _show_perk: bool = false
-var _perk_options: Array = []
-var _show_shop: bool = false
-var _shop_hover: int = -1
+# ── Kill feed ──────────────────────────────────────────────────────────────────
+var _feed: Array = []       # {text, timer}
+const FEED_MAX := 5
+const FEED_DURATION := 3.5
 
-# ── Drawing node ───────────────────────────────────────────────────────────────
-var _draw_node: Control
+# ── Screen-edge hit ────────────────────────────────────────────────────────────
+var _hit_flash: float = 0.0
+var _hit_dir: Vector2 = Vector2.ZERO
 
-var _vp_size: Vector2
+# ── Overlays ───────────────────────────────────────────────────────────────────
+var _perk_opts: Array = []
+var _show_perk: bool  = false
+var _show_shop: bool  = false
+var _fire_vis: bool   = false
+var _show_game_over: bool = false
+var _go_wave: int = 0; var _go_kills: int = 0; var _go_score: int = 0
+
+# ── Draw node ──────────────────────────────────────────────────────────────────
+var _draw: Control
+var _vp: Vector2 = Vector2(1080, 1920)
 
 
 func setup(_gm: Node) -> void:
 	layer = 10
-	_vp_size = Vector2(1080, 1920)
-	_draw_node = Control.new()
-	_draw_node.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_draw_node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_draw_node)
-	_draw_node.draw.connect(_on_draw)
-	_draw_node.set_process(true)
+	_draw = Control.new()
+	_draw.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_draw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_draw)
+	_draw.draw.connect(_on_draw)
 
 
-func _process(_delta: float) -> void:
-	_draw_node.queue_redraw()
+func _process(_d: float) -> void:
+	_vp = get_viewport().get_visible_rect().size
+	_draw.queue_redraw()
+	# Tick kill feed
+	for i in range(_feed.size() - 1, -1, -1):
+		_feed[i]["timer"] -= _d
+		if _feed[i]["timer"] <= 0.0:
+			_feed.remove_at(i)
+	_hit_flash = maxf(0.0, _hit_flash - _d * 4.0)
 
 
-func _input(event: InputEvent) -> void:
-	if event is InputEventScreenTouch:
-		_handle_touch(event)
-	elif event is InputEventScreenDrag:
-		_handle_drag(event)
+# ── Input ──────────────────────────────────────────────────────────────────────
+func _input(ev: InputEvent) -> void:
+	if ev is InputEventScreenTouch:
+		_handle_touch(ev)
+	elif ev is InputEventScreenDrag:
+		_handle_drag(ev)
 
 
-func _handle_touch(event: InputEventScreenTouch) -> void:
-	var vp := get_viewport().get_visible_rect().size
-	var pos := event.position
+func _handle_touch(ev: InputEventScreenTouch) -> void:
+	var pos := ev.position
+	var s   := _vp.y / 1920.0
 
-	if event.pressed:
-		# Left stick zone: bottom-left quarter
-		if pos.x < vp.x * 0.42 and pos.y > vp.y * 0.55:
+	if ev.pressed:
+		# ── Overlays intercept ALL touches ─────────────────────────────────
+		if _show_game_over:
+			get_tree().reload_current_scene(); return
+		if _show_perk:
+			_try_perk_tap(pos, s); return
+		if _show_shop:
+			_try_shop_tap(pos, s); return
+
+		# ── Left joystick zone ──────────────────────────────────────────────
+		if pos.x < _vp.x * 0.44 and pos.y > _vp.y * 0.52:
 			if _left_id == -1:
-				_left_id = event.index
-				_left_orig = pos
-				_left_cur = pos
+				_left_id = ev.index; _left_orig = pos; _left_cur = pos
 			return
 
-		# Button zones (right side)
-		if _check_buttons(pos, event.pressed):
-			return
+		# ── Button zones ────────────────────────────────────────────────────
+		var btns := _btn_rects(s)
+		for bname in btns:
+			if btns[bname].has_point(pos):
+				_button_touches[ev.index] = bname
+				_on_press(bname)
+				return
 
-		# Right look zone
-		if pos.x > vp.x * 0.42 and pos.y > vp.y * 0.35:
+		# ── Right aim zone ──────────────────────────────────────────────────
+		if pos.x >= _vp.x * 0.44:
 			if _right_id == -1:
-				_right_id = event.index
-				_right_orig = pos
-				_right_cur = pos
-			return
-
-	else:  # released
-		if event.index == _left_id:
+				_right_id = ev.index; _right_prev = pos
+	else:
+		# ── Releases ─────────────────────────────────────────────────────────
+		if ev.index == _left_id:
 			_left_id = -1
 			emit_signal("move_input", Vector2.ZERO)
-		if event.index == _right_id:
+		if ev.index == _right_id:
 			_right_id = -1
-			_fire_held = false
-			emit_signal("fire_held", false)
-		_check_buttons(pos, false)
+		if _button_touches.has(ev.index):
+			_on_release(_button_touches[ev.index])
+			_button_touches.erase(ev.index)
 
 
-func _handle_drag(event: InputEventScreenDrag) -> void:
-	if event.index == _left_id:
-		_left_cur = event.position
-		var delta := _left_cur - _left_orig
-		if delta.length() > DEAD_ZONE:
-			var dir := delta / STICK_RADIUS
-			if dir.length() > 1.0:
-				dir = dir.normalized()
-			emit_signal("move_input", Vector2(dir.x, -dir.y))
-		else:
-			emit_signal("move_input", Vector2.ZERO)
-
-	elif event.index == _right_id:
-		var drag_delta := event.relative
-		emit_signal("look_input", drag_delta)
-		_right_cur = event.position
+func _handle_drag(ev: InputEventScreenDrag) -> void:
+	if ev.index == _left_id:
+		_left_cur = ev.position
+		var delta := (_left_cur - _left_orig) / (STICK_RADIUS * _vp.y / 1920.0)
+		if delta.length() > 1.0: delta = delta.normalized()
+		emit_signal("move_input", Vector2(delta.x, -delta.y))
+	elif ev.index == _right_id:
+		emit_signal("look_input", ev.relative)
 
 
-func _check_buttons(pos: Vector2, pressed: bool) -> bool:
-	var vp := get_viewport().get_visible_rect().size
-	var buttons := _get_button_rects(vp)
-	for btn_name in buttons:
-		var r: Rect2 = buttons[btn_name]
-		if r.has_point(pos):
-			if pressed:
-				_on_button(btn_name)
-			return true
-	return false
-
-
-func _on_button(name: String) -> void:
+# ── Button press/release ───────────────────────────────────────────────────────
+func _on_press(name: String) -> void:
 	match name:
 		"fire":
-			_fire_held = true
+			_fire_vis = true
 			emit_signal("fire_held", true)
 		"reload":
 			emit_signal("reload_pressed")
@@ -165,336 +167,435 @@ func _on_button(name: String) -> void:
 			emit_signal("weapon_prev")
 
 
-func _get_button_rects(vp: Vector2) -> Dictionary:
-	var s := vp.y / 1920.0  # scale factor
-	return {
-		"fire":     Rect2(vp.x - 220*s, vp.y - 260*s, 180*s, 180*s),
-		"reload":   Rect2(vp.x - 230*s, vp.y - 480*s, 140*s, 110*s),
-		"dash":     Rect2(250*s, vp.y - 420*s, 130*s, 100*s),
-		"ult":      Rect2(vp.x - 390*s, vp.y - 270*s, 130*s, 130*s),
-		"wpn_next": Rect2(vp.x - 180*s, vp.y - 620*s, 100*s,  80*s),
-		"wpn_prev": Rect2(vp.x - 300*s, vp.y - 620*s, 100*s,  80*s),
-	}
+func _on_release(name: String) -> void:
+	match name:
+		"fire":
+			_fire_vis = false
+			emit_signal("fire_held", false)
 
 
-# ── Public updaters ────────────────────────────────────────────────────────────
-func update_hp(cur: float, mx: float) -> void:
-	hp = cur; max_hp = mx
+# ── Overlay tap handlers ───────────────────────────────────────────────────────
+func _try_perk_tap(pos: Vector2, s: float) -> void:
+	if _perk_opts.is_empty(): return
+	var card_w := 260.0 * s; var card_h := 340.0 * s
+	var n := _perk_opts.size()
+	var total_w := card_w * n + 28.0 * s * (n - 1)
+	var sx := (_vp.x - total_w) * 0.5
+	for i in range(n):
+		var r := Rect2(sx + i * (card_w + 28.0*s), 280.0*s, card_w, card_h)
+		if r.has_point(pos):
+			emit_signal("perk_chosen", _perk_opts[i])
+			_show_perk = false
+			return
+	# Tap X (close only if desired — perk screen forces choice, so no auto-close)
 
 
-func update_ammo(cur: int, mx: int) -> void:
-	ammo = cur; max_ammo = mx
+func _try_shop_tap(pos: Vector2, s: float) -> void:
+	# Close button
+	if Rect2(_vp.x - 110*s, 70*s, 90*s, 90*s).has_point(pos):
+		_show_shop = false; return
+	var weapons := Balance.WEAPON3D_ORDER
+	var cw := 200.0*s; var ch := 260.0*s; var pad := 22.0*s; var cols := 3
+	for i in range(weapons.size()):
+		var wid: String = weapons[i]
+		var cx := 40.0*s + (i % cols) * (cw + pad)
+		var cy := 250.0*s + (i / cols) * (ch + pad)
+		if Rect2(cx, cy, cw, ch).has_point(pos):
+			emit_signal("shop_buy", wid)
+			return
+	_show_shop = false  # tap outside = close
 
 
-func update_wave(w: int, enemies: int) -> void:
-	wave = w; enemy_count = enemies
-
-
-func update_xp(cur: int, to_next: int, lv: int) -> void:
-	xp = cur; xp_to_next = to_next; level = lv
-
-
-func update_money(m: int) -> void:
-	money = m
-
-
-func update_reload(reloading: bool, progress: float) -> void:
-	is_reloading = reloading; reload_progress = progress
-
-
-func update_dash_cd(cd: float) -> void:
-	dash_cd = cd
-
-
-func update_ult(cd: float, mx: float) -> void:
-	ult_cd = cd; ult_max_cd = mx
-
-
-func update_weapon(wid: String) -> void:
-	current_weapon = wid
-
-
-func set_zone_warning(w: bool) -> void:
-	zone_warning = w
-
+# ── Public API ─────────────────────────────────────────────────────────────────
+func update_hp(cur: float, mx: float) -> void:   hp = cur; max_hp = mx
+func update_ammo(cur: int, mx: int) -> void:      ammo = cur; max_ammo = mx
+func update_wave(w: int, ec: int) -> void:        wave = w; enemy_count = ec
+func update_xp(xp: int, nxt: int, lv: int) -> void: p_xp = xp; p_xp_next = nxt; p_level = lv
+func update_money(m: int) -> void:               money = m
+func update_reload(r: bool, p: float) -> void:   is_reloading = r; reload_progress = p
+func update_dash_cd(cd: float) -> void:          dash_cd = cd
+func update_ult(cd: float, mx: float) -> void:   ult_cd = cd; ult_max_cd = mx
+func update_weapon(wid: String) -> void:         current_weapon = wid
+func set_zone_warning(w: bool) -> void:          zone_warning = w
 
 func add_kill_feed(text: String) -> void:
-	kill_feed.append(text)
-	kill_feed_timers.append(3.5)
-	if kill_feed.size() > 4:
-		kill_feed.pop_front()
-		kill_feed_timers.pop_front()
+	_feed.append({"text": text, "timer": FEED_DURATION})
+	if _feed.size() > FEED_MAX: _feed.pop_front()
 
+func trigger_hit_flash() -> void:
+	_hit_flash = 1.0
 
-func show_perk_choice(options: Array) -> void:
-	_perk_options = options
-	_show_perk = true
+func show_perk_choice(opts: Array) -> void:
+	_perk_opts = opts; _show_perk = true
 
-
-func show_shop() -> void:
+func show_shop_between_waves() -> void:
 	_show_shop = true
 
+func show_game_over(w: int, kills: int, sc: int) -> void:
+	_go_wave = w; _go_kills = kills; _go_score = sc; _show_game_over = true
 
-func hide_shop() -> void:
-	_show_shop = false
+
+# ── Button rect dictionary ─────────────────────────────────────────────────────
+func _btn_rects(s: float) -> Dictionary:
+	return {
+		"fire":     Rect2(_vp.x-220*s, _vp.y-265*s, 185*s, 185*s),
+		"reload":   Rect2(_vp.x-240*s, _vp.y-490*s, 145*s, 115*s),
+		"dash":     Rect2(250*s,        _vp.y-425*s, 130*s, 105*s),
+		"ult":      Rect2(_vp.x-405*s, _vp.y-275*s, 135*s, 135*s),
+		"wpn_next": Rect2(_vp.x-185*s, _vp.y-640*s, 105*s,  82*s),
+		"wpn_prev": Rect2(_vp.x-310*s, _vp.y-640*s, 105*s,  82*s),
+	}
 
 
 # ── Drawing ────────────────────────────────────────────────────────────────────
 func _on_draw() -> void:
-	var vp := get_viewport().get_visible_rect().size
-	_vp_size = vp
-	var s := vp.y / 1920.0
+	var s := _vp.y / 1920.0
 	var font := ThemeDB.fallback_font
 
-	_draw_crosshair(vp, s, font)
-	_draw_hp_bar(vp, s, font)
-	_draw_ammo(vp, s, font)
-	_draw_wave_info(vp, s, font)
-	_draw_xp_bar(vp, s, font)
-	_draw_buttons(vp, s, font)
-	_draw_left_stick(vp, s)
-	_draw_right_stick(vp, s)
-	_draw_kill_feed(vp, s, font)
-	_draw_minimap_zone(vp, s)
-
-	if zone_warning:
-		_draw_zone_warning(vp, s, font)
-
+	if _show_game_over:
+		_draw_game_over(s, font); return
 	if _show_perk:
-		_draw_perk_overlay(vp, s, font)
-	elif _show_shop:
-		_draw_shop_overlay(vp, s, font)
+		_draw_perk_overlay(s, font); return
+	if _show_shop:
+		_draw_shop_overlay(s, font); return
+
+	_draw_crosshair(s)
+	_draw_hp_shield(s, font)
+	_draw_ammo_panel(s, font)
+	_draw_wave_hud(s, font)
+	_draw_xp_bar(s, font)
+	_draw_buttons(s, font)
+	_draw_left_stick(s)
+	_draw_kill_feed(s, font)
+	_draw_minimap(s, font)
+	_draw_hit_flash()
 
 
-func _draw_crosshair(vp: Vector2, s: float, font: Font) -> void:
-	var cx := vp.x * 0.5
-	var cy := vp.y * 0.5 - 80.0 * s
-	var gap := 22.0 * s
-	var len := 16.0 * s
-	var col := Color(1.0, 1.0, 1.0, 0.85)
+# ── Crosshair ──────────────────────────────────────────────────────────────────
+func _draw_crosshair(s: float) -> void:
+	var cx := _vp.x * 0.5
+	var cy := _vp.y * 0.5 - 75.0 * s
+	var gap := 24.0 * s
+	var len := 18.0 * s
+	var col := Color(1.0, 1.0, 1.0, 0.88)
+	var dot_col := Color(1.0, 0.3, 0.3, 0.9)
 	if current_weapon == "sniper":
-		# Circle reticle for sniper
-		_draw_node.draw_arc(Vector2(cx, cy), 28.0 * s, 0, TAU, 32, Color(0.3, 0.9, 1.0, 0.9), 1.5)
-		_draw_node.draw_line(Vector2(cx - 38*s, cy), Vector2(cx - gap, cy), col, 1.5)
-		_draw_node.draw_line(Vector2(cx + gap, cy), Vector2(cx + 38*s, cy), col, 1.5)
-		_draw_node.draw_line(Vector2(cx, cy - 38*s), Vector2(cx, cy - gap), col, 1.5)
-		_draw_node.draw_line(Vector2(cx, cy + gap), Vector2(cx, cy + 38*s), col, 1.5)
+		_draw.draw_arc(Vector2(cx,cy), 30.0*s, 0, TAU, 32, Color(0.3,0.9,1.0,0.9), 1.5)
 	else:
-		_draw_node.draw_line(Vector2(cx - gap - len, cy), Vector2(cx - gap, cy), col, 2.0)
-		_draw_node.draw_line(Vector2(cx + gap, cy), Vector2(cx + gap + len, cy), col, 2.0)
-		_draw_node.draw_line(Vector2(cx, cy - gap - len), Vector2(cx, cy - gap), col, 2.0)
-		_draw_node.draw_line(Vector2(cx, cy + gap), Vector2(cx, cy + gap + len), col, 2.0)
-		_draw_node.draw_circle(Vector2(cx, cy), 3.0 * s, Color(1,1,1,0.7))
+		# Spread indicator
+		var spread_gap := gap
+		if _fire_vis: spread_gap *= 1.35
+		_draw.draw_line(Vector2(cx - spread_gap - len, cy), Vector2(cx - spread_gap, cy), col, 2.0)
+		_draw.draw_line(Vector2(cx + spread_gap, cy), Vector2(cx + spread_gap + len, cy), col, 2.0)
+		_draw.draw_line(Vector2(cx, cy - spread_gap - len), Vector2(cx, cy - spread_gap), col, 2.0)
+		_draw.draw_line(Vector2(cx, cy + spread_gap), Vector2(cx, cy + spread_gap + len), col, 2.0)
+	_draw.draw_circle(Vector2(cx, cy), 2.8*s, dot_col)
 
 
-func _draw_hp_bar(vp: Vector2, s: float, font: Font) -> void:
-	var bw := 320.0 * s
-	var bh := 22.0 * s
-	var bx := 40.0 * s
-	var by := vp.y - 160.0 * s
+# ── HP + Shield ────────────────────────────────────────────────────────────────
+func _draw_hp_shield(s: float, font: Font) -> void:
+	var bw := 330.0*s; var bh := 24.0*s
+	var bx := 36.0*s;  var by := _vp.y - 168.0*s
 
-	# HP
-	_draw_node.draw_rect(Rect2(bx, by, bw, bh), Color(0.15, 0.0, 0.0, 0.8))
-	var hf := maxf(0.0, hp / max_hp)
-	var hcol := Color(0.15, 0.85, 0.25) if hf > 0.4 else Color(0.9, 0.35, 0.1)
-	_draw_node.draw_rect(Rect2(bx, by, bw * hf, bh), hcol)
-	_draw_node.draw_rect(Rect2(bx, by, bw, bh), Color(1,1,1,0.5), false, 1.5)
-	_draw_node.draw_string(font, Vector2(bx + 6, by + bh - 4), "HP  %d/%d" % [int(hp), int(max_hp)],
-		HORIZONTAL_ALIGNMENT_LEFT, -1, int(14 * s), Color.WHITE)
+	# HP shadow
+	_draw.draw_rect(Rect2(bx-2, by-2, bw+4, bh+4), Color(0,0,0,0.5))
+	_draw.draw_rect(Rect2(bx, by, bw, bh), Color(0.1,0.0,0.0,0.9))
+	var hf := maxf(0.0, hp / maxf(max_hp,1.0))
+	var hcol := Color(0.15,0.85,0.25) if hf > 0.4 else (Color(0.9,0.65,0.1) if hf > 0.2 else Color(1.0,0.1,0.1))
+	if hf > 0.0:
+		_draw.draw_rect(Rect2(bx, by, bw*hf, bh), hcol)
+	_draw.draw_rect(Rect2(bx, by, bw, bh), Color(1,1,1,0.4), false, 1.5)
+	_draw.draw_string(font, Vector2(bx+8, by+bh-5), "HP  %d / %d" % [int(hp), int(max_hp)],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, int(14*s), Color.WHITE)
 
-	# Shield
+	# Shield bar (above HP)
 	if shield > 0.0:
-		var sy := by - 28.0 * s
-		var sf := maxf(0.0, shield / max_shield)
-		_draw_node.draw_rect(Rect2(bx, sy, bw, bh * 0.65), Color(0.0, 0.1, 0.25, 0.8))
-		_draw_node.draw_rect(Rect2(bx, sy, bw * sf, bh * 0.65), Color(0.3, 0.6, 1.0, 0.9))
-		_draw_node.draw_rect(Rect2(bx, sy, bw, bh * 0.65), Color(0.5, 0.8, 1.0, 0.5), false, 1.2)
+		var sy := by - 30.0*s; var sf := maxf(0.0, shield/maxf(max_shield,1.0))
+		_draw.draw_rect(Rect2(bx, sy, bw, bh*0.6), Color(0,0.08,0.2,0.85))
+		_draw.draw_rect(Rect2(bx, sy, bw*sf, bh*0.6), Color(0.35,0.65,1.0,0.92))
+		_draw.draw_rect(Rect2(bx, sy, bw, bh*0.6), Color(0.5,0.8,1.0,0.5), false, 1.2)
+		_draw.draw_string(font, Vector2(bx+8, sy+bh*0.55), "SHIELD  %d" % int(shield),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, int(13*s), Color(0.7,0.9,1.0))
 
 
-func _draw_ammo(vp: Vector2, s: float, font: Font) -> void:
-	var ax := vp.x - 40.0 * s
-	var ay := vp.y - 200.0 * s
-	var fs := int(52.0 * s)
-	var ammo_col := Color.WHITE if not is_reloading else Color(0.9, 0.6, 0.1)
-	_draw_node.draw_string(font, Vector2(ax, ay), str(ammo),
-		HORIZONTAL_ALIGNMENT_RIGHT, -1, fs, ammo_col)
-	_draw_node.draw_string(font, Vector2(ax, ay + fs * 0.75), "/" + str(max_ammo),
-		HORIZONTAL_ALIGNMENT_RIGHT, -1, int(fs * 0.55), Color(0.7, 0.7, 0.7))
-
+# ── Ammo panel ─────────────────────────────────────────────────────────────────
+func _draw_ammo_panel(s: float, font: Font) -> void:
+	var ax := _vp.x - 36.0*s; var ay := _vp.y - 210.0*s
+	var big := int(58.0*s)
+	var acol := Color.WHITE if not is_reloading else Color(0.9,0.6,0.1)
+	# Ammo count
+	_draw.draw_string(font, Vector2(ax, ay), str(ammo),
+		HORIZONTAL_ALIGNMENT_RIGHT, -1, big, acol)
+	_draw.draw_string(font, Vector2(ax, ay + big*0.72), "/%d" % max_ammo,
+		HORIZONTAL_ALIGNMENT_RIGHT, -1, int(big*0.52), Color(0.7,0.7,0.7))
+	# Weapon name
+	_draw.draw_string(font, Vector2(ax, ay - 44.0*s), current_weapon.to_upper(),
+		HORIZONTAL_ALIGNMENT_RIGHT, -1, int(21.0*s), Balance.WEAPONS3D.get(current_weapon,{}).get("color",Color.WHITE))
 	# Reload arc
 	if is_reloading:
-		var cx := ax - 50.0 * s
-		var cy := ay - 20.0 * s
-		_draw_node.draw_arc(Vector2(cx, cy), 28.0 * s, -PI * 0.5,
-			-PI * 0.5 + reload_progress * TAU, 32, Color(1.0, 0.7, 0.1), 4.0)
-		_draw_node.draw_string(font, Vector2(cx, cy + 8.0 * s), "RELOAD",
-			HORIZONTAL_ALIGNMENT_CENTER, -1, int(13.0 * s), Color(1.0, 0.8, 0.2))
-
-	# Weapon name
-	var wdat: Dictionary = Balance.WEAPONS3D.get(current_weapon, {})
-	var wname := current_weapon.to_upper()
-	_draw_node.draw_string(font, Vector2(ax, ay - 42.0 * s), wname,
-		HORIZONTAL_ALIGNMENT_RIGHT, -1, int(20.0 * s), Color(0.8, 0.8, 0.8))
+		var rc := Vector2(ax - 56.0*s, ay - 28.0*s)
+		_draw.draw_arc(rc, 30.0*s, -PI*0.5, -PI*0.5 + reload_progress*TAU, 32,
+			Color(1.0,0.7,0.1), 4.5)
+		_draw.draw_string(font, Vector2(rc.x, rc.y + 10.0*s), "RELOAD",
+			HORIZONTAL_ALIGNMENT_CENTER, -1, int(14*s), Color(1.0,0.8,0.2))
 
 
-func _draw_wave_info(vp: Vector2, s: float, font: Font) -> void:
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, 60.0 * s),
-		"Wave %d" % wave, HORIZONTAL_ALIGNMENT_CENTER, -1, int(30.0 * s), Color(1, 1, 1, 0.9))
+# ── Wave / score info ──────────────────────────────────────────────────────────
+func _draw_wave_hud(s: float, font: Font) -> void:
+	var cx := _vp.x * 0.5
+	_draw.draw_string(font, Vector2(cx, 56.0*s),
+		"Wave  %d" % wave, HORIZONTAL_ALIGNMENT_CENTER, -1, int(32*s), Color(1,1,1,0.9))
 	if enemy_count > 0:
-		_draw_node.draw_string(font, Vector2(vp.x * 0.5, 100.0 * s),
-			"%d enemies" % enemy_count, HORIZONTAL_ALIGNMENT_CENTER, -1, int(20.0 * s), Color(1, 0.4, 0.3, 0.85))
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, 136.0 * s),
-		"$%d" % money, HORIZONTAL_ALIGNMENT_CENTER, -1, int(22.0 * s), Color(1.0, 0.9, 0.3, 0.85))
+		_draw.draw_string(font, Vector2(cx, 96.0*s),
+			"%d left" % enemy_count, HORIZONTAL_ALIGNMENT_CENTER, -1, int(21*s),
+			Color(1.0,0.42,0.28,0.88))
+	_draw.draw_string(font, Vector2(cx, 130.0*s),
+		"$%d" % money, HORIZONTAL_ALIGNMENT_CENTER, -1, int(22*s),
+		Color(1.0,0.9,0.3,0.88))
+	if combo >= 2:
+		var pulse := sin(Time.get_ticks_msec()*0.012)*0.4+0.8
+		_draw.draw_string(font, Vector2(cx, 168.0*s),
+			"x%d COMBO" % combo, HORIZONTAL_ALIGNMENT_CENTER, -1, int(28*s),
+			Color(1.0, 0.55, 0.0, pulse))
 
 
-func _draw_xp_bar(vp: Vector2, s: float, font: Font) -> void:
-	var bw := vp.x - 80.0 * s
-	var bh := 10.0 * s
-	var bx := 40.0 * s
-	var by := vp.y - 15.0 * s
-	_draw_node.draw_rect(Rect2(bx, by, bw, bh), Color(0.1, 0.0, 0.2, 0.8))
-	var xf := float(xp) / float(maxi(xp_to_next, 1))
-	_draw_node.draw_rect(Rect2(bx, by, bw * xf, bh), Color(0.7, 0.2, 1.0, 0.9))
-	_draw_node.draw_string(font, Vector2(bx + 6.0 * s, by - 2.0 * s),
-		"LVL %d" % level, HORIZONTAL_ALIGNMENT_LEFT, -1, int(11.0 * s), Color(0.8, 0.6, 1.0))
+# ── XP bar ─────────────────────────────────────────────────────────────────────
+func _draw_xp_bar(s: float, font: Font) -> void:
+	var bw := _vp.x - 80.0*s; var bh := 11.0*s
+	var bx := 40.0*s;          var by := _vp.y - 16.0*s
+	_draw.draw_rect(Rect2(bx, by, bw, bh), Color(0.08,0.0,0.18,0.85))
+	var xf := float(p_xp) / float(maxi(p_xp_next, 1))
+	_draw.draw_rect(Rect2(bx, by, bw*xf, bh), Color(0.75,0.25,1.0,0.92))
+	_draw.draw_rect(Rect2(bx, by, bw, bh), Color(0.6,0.3,0.9,0.4), false, 1.2)
+	_draw.draw_string(font, Vector2(bx+7, by-2.0*s),
+		"Lv%d" % p_level, HORIZONTAL_ALIGNMENT_LEFT, -1, int(12*s), Color(0.85,0.65,1.0))
 
 
-func _draw_buttons(vp: Vector2, s: float, font: Font) -> void:
-	var btns := _get_button_rects(vp)
+# ── Buttons ────────────────────────────────────────────────────────────────────
+func _draw_buttons(s: float, font: Font) -> void:
+	var btns := _btn_rects(s)
 
-	var fire_col := Color(0.9, 0.2, 0.15, 0.85) if _fire_held else Color(0.8, 0.15, 0.1, 0.65)
-	_draw_btn(btns["fire"], fire_col, "FIRE", font, s)
+	# FIRE
+	var fire_c := Color(0.95,0.18,0.12,0.9) if _fire_vis else Color(0.72,0.12,0.08,0.72)
+	_draw_btn(btns["fire"], fire_c, "FIRE", font, s, true)
 
-	var reload_col := Color(0.9, 0.6, 0.1, 0.7) if is_reloading else Color(0.5, 0.5, 0.2, 0.60)
-	_draw_btn(btns["reload"], reload_col, "R", font, s)
+	# RELOAD
+	var rl_c := Color(0.88,0.58,0.08,0.78) if is_reloading else Color(0.4,0.4,0.18,0.65)
+	_draw_btn(btns["reload"], rl_c, "R", font, s, false)
 
+	# DASH
 	var dash_ready := dash_cd <= 0.0
-	var dash_col := Color(0.1, 0.6, 1.0, 0.75) if dash_ready else Color(0.2, 0.3, 0.5, 0.5)
-	_draw_btn(btns["dash"], dash_col, "DASH", font, s)
+	_draw_btn(btns["dash"], Color(0.1,0.6,1.0,0.78) if dash_ready else Color(0.15,0.3,0.55,0.52),
+		"DASH", font, s, false)
 	if not dash_ready:
-		_draw_node.draw_string(font, Vector2(btns["dash"].position.x + btns["dash"].size.x * 0.5,
-			btns["dash"].end.y + 22.0 * s), "%.1fs" % dash_cd,
-			HORIZONTAL_ALIGNMENT_CENTER, -1, int(16.0 * s), Color(0.6, 0.8, 1.0))
+		_draw.draw_arc(btns["dash"].get_center(), btns["dash"].size.x*0.52,
+			-PI*0.5, -PI*0.5 + (1.0-dash_cd/Balance.P3D_DASH_CD)*TAU,
+			24, Color(0.4,0.8,1.0,0.65), 3.5*s)
 
-	var ult_f := 1.0 - ult_cd / maxf(ult_max_cd, 0.01)
-	var ult_col := Color(0.8, 0.5, 0.0, 0.8) if ult_cd <= 0.0 else Color(0.35, 0.25, 0.05, 0.55)
-	_draw_btn(btns["ult"], ult_col, "ULT", font, s)
+	# ULT
+	var ult_r := 1.0 - ult_cd/maxf(ult_max_cd,0.01)
+	_draw_btn(btns["ult"], Color(0.85,0.5,0.0,0.82) if ult_cd<=0 else Color(0.3,0.2,0.05,0.55),
+		"ULT", font, s, false)
 	if ult_cd > 0.0:
-		_draw_node.draw_arc(btns["ult"].get_center(),
-			btns["ult"].size.x * 0.52, -PI * 0.5, -PI * 0.5 + ult_f * TAU,
-			24, Color(1.0, 0.8, 0.2, 0.8), 3.5 * s)
+		_draw.draw_arc(btns["ult"].get_center(), btns["ult"].size.x*0.52,
+			-PI*0.5, -PI*0.5 + ult_r*TAU, 24, Color(1.0,0.8,0.2,0.75), 4.0*s)
 
-	_draw_btn(btns["wpn_next"], Color(0.3, 0.3, 0.3, 0.55), ">", font, s)
-	_draw_btn(btns["wpn_prev"], Color(0.3, 0.3, 0.3, 0.55), "<", font, s)
-
-
-func _draw_btn(r: Rect2, col: Color, label: String, font: Font, s: float) -> void:
-	_draw_node.draw_rect(r, col)
-	_draw_node.draw_rect(r, Color(1,1,1,0.35), false, 2.0)
-	_draw_node.draw_string(font, Vector2(r.position.x + r.size.x * 0.5,
-		r.position.y + r.size.y * 0.58), label,
-		HORIZONTAL_ALIGNMENT_CENTER, -1, int(minf(r.size.x, r.size.y) * 0.38), Color.WHITE)
+	_draw_btn(btns["wpn_next"], Color(0.28,0.28,0.28,0.6), ">", font, s, false)
+	_draw_btn(btns["wpn_prev"], Color(0.28,0.28,0.28,0.6), "<", font, s, false)
 
 
-func _draw_left_stick(vp: Vector2, s: float) -> void:
-	if _left_id == -1:
-		return
-	var center := _left_orig
-	_draw_node.draw_arc(center, STICK_RADIUS * s, 0, TAU, 32, Color(1,1,1,0.18), 2.0)
-	var raw := (_left_cur - _left_orig)
-	var clamped := raw.limit_length(STICK_RADIUS * s)
-	_draw_node.draw_circle(center + clamped, 30.0 * s, Color(1,1,1,0.35))
+func _draw_btn(r: Rect2, col: Color, lbl: String, font: Font, s: float, circle: bool) -> void:
+	if circle:
+		_draw.draw_arc(r.get_center(), r.size.x*0.5, 0, TAU, 32, col, r.size.x*0.5)
+		_draw.draw_arc(r.get_center(), r.size.x*0.5, 0, TAU, 32, Color(1,1,1,0.4), 2.5)
+	else:
+		_draw.draw_rect(r, col)
+		_draw.draw_rect(r, Color(1,1,1,0.32), false, 2.0)
+	var fs := int(minf(r.size.x, r.size.y) * (0.38 if not circle else 0.30))
+	_draw.draw_string(font, r.get_center() + Vector2(0, fs*0.38),
+		lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, fs, Color.WHITE)
 
 
-func _draw_right_stick(vp: Vector2, s: float) -> void:
-	pass  # Right side is free-drag; no visual indicator needed
+# ── Left joystick visual ───────────────────────────────────────────────────────
+func _draw_left_stick(s: float) -> void:
+	if _left_id == -1: return
+	var sc := s
+	_draw.draw_arc(_left_orig, STICK_RADIUS*sc, 0, TAU, 32, Color(1,1,1,0.15), 2.0)
+	var raw := (_left_cur - _left_orig).limit_length(STICK_RADIUS*sc)
+	_draw.draw_circle(_left_orig + raw, 34.0*sc, Color(1,1,1,0.32))
+	_draw.draw_arc(_left_orig + raw, 34.0*sc, 0, TAU, 24, Color(1,1,1,0.55), 2.0)
 
 
-func _draw_kill_feed(vp: Vector2, s: float, font: Font) -> void:
-	var y := 180.0 * s
-	for i in range(kill_feed.size()):
-		_draw_node.draw_string(font, Vector2(vp.x - 40.0 * s, y),
-			kill_feed[i], HORIZONTAL_ALIGNMENT_RIGHT, -1, int(19.0 * s),
-			Color(1.0, 0.9, 0.3, 0.9))
-		y += 26.0 * s
+# ── Kill feed ──────────────────────────────────────────────────────────────────
+func _draw_kill_feed(s: float, font: Font) -> void:
+	var y := 200.0*s
+	for item in _feed:
+		var a := clampf(item["timer"] / FEED_DURATION * 2.0, 0.0, 1.0)
+		var x := _vp.x - 40.0*s
+		# Highlight combo lines
+		var col := Color(1.0, 0.9, 0.3, a)
+		if "Combo" in item["text"] or "kill" in item["text"].to_lower():
+			col = Color(1.0, 0.55, 0.0, a)
+		elif "Wave" in item["text"]:
+			col = Color(0.5, 1.0, 0.5, a)
+		elif "+" in item["text"] and "$" in item["text"]:
+			col = Color(0.8, 0.95, 0.3, a)
+		_draw.draw_string(font, Vector2(x, y), item["text"],
+			HORIZONTAL_ALIGNMENT_RIGHT, -1, int(20*s), col)
+		y += 27.0*s
 
 
-func _draw_minimap_zone(vp: Vector2, s: float) -> void:
-	# Tiny zone indicator (top-right corner)
-	var cx := vp.x - 90.0 * s
-	var cy := 220.0 * s
-	var r := 60.0 * s
-	_draw_node.draw_arc(Vector2(cx, cy), r, 0, TAU, 32, Color(0.2, 0.7, 1.0, 0.5), 2.0 * s)
+# ── Minimap ────────────────────────────────────────────────────────────────────
+func _draw_minimap(s: float, font: Font) -> void:
+	var cx := _vp.x - 95.0*s; var cy := 240.0*s; var r := 68.0*s
+	_draw.draw_circle(Vector2(cx,cy), r, Color(0,0,0,0.48))
+	_draw.draw_arc(Vector2(cx,cy), r, 0, TAU, 36, Color(0.3,0.9,0.35,0.55), 1.8)
+	# Zone ring
+	var zfrac := clampf(r * 0.85, 0, r)
+	_draw.draw_arc(Vector2(cx,cy), zfrac, 0, TAU, 28,
+		Color(0.2,0.8,1.0,0.4), 1.5)
+	# Player dot (center)
+	_draw.draw_circle(Vector2(cx,cy), 5.0*s, Color(0.3,0.6,1.0,0.9))
+	# Enemy blips — positioned from gm
+	if Engine.get_main_loop():
+		var gm := _find_gm()
+		if gm:
+			var arena := Balance.ARENA_HALF
+			for e in gm.enemies:
+				if not is_instance_valid(e): continue
+				var ep: Vector3 = e.global_position
+				var pp: Vector3 = gm.player.global_position if gm.player else Vector3.ZERO
+				var rel_x := (ep.x - pp.x) / (arena * 2.0) * r * 2.0
+				var rel_z := (ep.z - pp.z) / (arena * 2.0) * r * 2.0
+				var bpos := Vector2(cx + rel_x, cy + rel_z)
+				if (bpos - Vector2(cx,cy)).length() < r:
+					var bcol := Color(1.0,0.25,0.1,0.88) if e.get("type","") != "boss" else Color(1.0,0.8,0.0,0.88)
+					_draw.draw_circle(bpos, 4.5*s, bcol)
+	_draw.draw_string(font, Vector2(cx, cy + r + 16.0*s),
+		"MAP", HORIZONTAL_ALIGNMENT_CENTER, -1, int(11*s), Color(0.7,0.7,0.7,0.6))
 
 
-func _draw_zone_warning(vp: Vector2, s: float, font: Font) -> void:
-	var pulse := sin(Time.get_ticks_msec() * 0.006) * 0.5 + 0.5
-	_draw_node.draw_rect(Rect2(0, 0, vp.x, 8.0 * s), Color(1.0, 0.1, 0.1, 0.5 + pulse * 0.4))
-	_draw_node.draw_rect(Rect2(0, vp.y - 8.0 * s, vp.x, 8.0 * s), Color(1.0, 0.1, 0.1, 0.5 + pulse * 0.4))
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, vp.y * 0.15),
-		"OUT OF ZONE", HORIZONTAL_ALIGNMENT_CENTER, -1, int(36.0 * s),
-		Color(1.0, 0.2, 0.2, 0.7 + pulse * 0.3))
+func _find_gm() -> Node:
+	# Walk up to root, find GameManager3D
+	var node: Node = self
+	while node:
+		node = node.get_parent()
+		if node and node.get_script() and node.name == "GameManager3D":
+			return node
+	return null
 
 
-func _draw_perk_overlay(vp: Vector2, s: float, font: Font) -> void:
-	_draw_node.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0, 0, 0, 0.72))
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, 200.0 * s),
-		"LEVEL UP!  Choose a Perk", HORIZONTAL_ALIGNMENT_CENTER, -1, int(42.0 * s),
-		Color(0.8, 0.4, 1.0))
-
-	var card_w := 260.0 * s
-	var card_h := 340.0 * s
-	var total_w := card_w * _perk_options.size() + 30.0 * s * (_perk_options.size() - 1)
-	var start_x := (vp.x - total_w) * 0.5
-
-	for i in range(_perk_options.size()):
-		var key: String = _perk_options[i]
-		var perk: Dictionary = Balance.PERKS.get(key, {"name": key, "desc": ""})
-		var cx := start_x + i * (card_w + 30.0 * s)
-		var r := Rect2(cx, 300.0 * s, card_w, card_h)
-		_draw_node.draw_rect(r, Color(0.22, 0.10, 0.35, 0.95))
-		_draw_node.draw_rect(r, Color(0.7, 0.3, 1.0, 0.8), false, 2.5)
-		_draw_node.draw_string(font, Vector2(r.position.x + r.size.x * 0.5,
-			r.position.y + 60.0 * s), perk.get("name", key),
-			HORIZONTAL_ALIGNMENT_CENTER, -1, int(26.0 * s), Color(1.0, 0.8, 1.0))
-		_draw_node.draw_string(font, Vector2(r.position.x + 20.0 * s,
-			r.position.y + 110.0 * s), perk.get("desc", ""),
-			HORIZONTAL_ALIGNMENT_LEFT, int(card_w - 40.0 * s), int(20.0 * s), Color(0.85, 0.85, 0.85))
-
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, vp.y - 120.0 * s),
-		"Tap a card to choose", HORIZONTAL_ALIGNMENT_CENTER, -1, int(22.0 * s), Color(0.7, 0.7, 0.7))
+# ── Screen-edge hit flash ──────────────────────────────────────────────────────
+func _draw_hit_flash() -> void:
+	if _hit_flash <= 0.0: return
+	var a := _hit_flash * 0.38
+	_draw.draw_rect(Rect2(0, 0, _vp.x, _vp.y), Color(1.0, 0.05, 0.05, a))
 
 
-func _draw_shop_overlay(vp: Vector2, s: float, font: Font) -> void:
-	_draw_node.draw_rect(Rect2(0, 0, vp.x, vp.y), Color(0, 0, 0, 0.78))
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, 180.0 * s),
-		"SHOP  —  $%d" % money, HORIZONTAL_ALIGNMENT_CENTER, -1, int(38.0 * s), Color(1.0, 0.9, 0.3))
+# ── Perk overlay ───────────────────────────────────────────────────────────────
+func _draw_perk_overlay(s: float, font: Font) -> void:
+	_draw.draw_rect(Rect2(0,0,_vp.x,_vp.y), Color(0,0,0,0.80))
+	# Header glow
+	_draw.draw_rect(Rect2(0, 0, _vp.x, 260.0*s), Color(0.18,0.0,0.28,0.9))
+	_draw.draw_string(font, Vector2(_vp.x*0.5, 96.0*s),
+		"LEVEL  %d" % p_level,
+		HORIZONTAL_ALIGNMENT_CENTER, -1, int(38*s), Color(0.9,0.5,1.0))
+	_draw.draw_string(font, Vector2(_vp.x*0.5, 150.0*s),
+		"Choose a Perk", HORIZONTAL_ALIGNMENT_CENTER, -1, int(28*s), Color(0.75,0.75,0.75))
 
-	var weapons := Balance.WEAPON3D_ORDER
-	var card_w := 200.0 * s
-	var card_h := 260.0 * s
-	var cols := 3
-	var pad := 24.0 * s
+	var n := _perk_opts.size()
+	var cw := 260.0*s; var ch := 340.0*s
+	var total_w := cw * n + 28.0*s * (n-1)
+	var sx := (_vp.x - total_w) * 0.5
+	for i in range(n):
+		var key: String = _perk_opts[i]
+		var perk: Dictionary = Balance.PERKS.get(key, {"name":key,"desc":""})
+		var r := Rect2(sx + i*(cw+28.0*s), 280.0*s, cw, ch)
+		# Card bg gradient-ish
+		_draw.draw_rect(r, Color(0.20,0.08,0.32,0.95))
+		_draw.draw_rect(r, Color(0.72,0.32,1.0,0.85), false, 2.5)
+		# Perk icon background circle
+		_draw.draw_circle(r.get_center() + Vector2(0, -80*s), 40.0*s, Color(0.35,0.15,0.5,0.8))
+		_draw.draw_arc(r.get_center() + Vector2(0, -80*s), 40.0*s, 0, TAU, 24,
+			Color(0.8,0.4,1.0), 2.5)
+		# Perk number icon
+		_draw.draw_string(font, r.get_center() + Vector2(0, -80*s + int(18*s)),
+			str(i+1), HORIZONTAL_ALIGNMENT_CENTER, -1, int(32*s), Color(1.0,0.9,1.0))
+		# Name
+		_draw.draw_string(font, Vector2(r.get_center().x, r.position.y + 150*s),
+			perk.get("name", key), HORIZONTAL_ALIGNMENT_CENTER, -1, int(24*s), Color(1.0,0.82,1.0))
+		# Desc (wrapped)
+		var desc: String = perk.get("desc", "")
+		_draw.draw_string(font, Vector2(r.position.x + 18*s, r.position.y + 195*s),
+			desc, HORIZONTAL_ALIGNMENT_LEFT, int(cw-36*s), int(19*s), Color(0.82,0.82,0.82))
+		# Tap hint
+		_draw.draw_string(font, Vector2(r.get_center().x, r.end.y - 26*s),
+			"Tap to choose", HORIZONTAL_ALIGNMENT_CENTER, -1, int(16*s), Color(0.6,0.6,0.6))
 
-	for i in range(weapons.size()):
-		var wid: String = weapons[i]
-		var wdat: Dictionary = Balance.WEAPONS3D[wid]
-		var col_idx := i % cols
-		var row_idx := i / cols
-		var cx := 40.0 * s + col_idx * (card_w + pad)
-		var cy := 260.0 * s + row_idx * (card_h + pad)
-		var r := Rect2(cx, cy, card_w, card_h)
-		var can_buy := money >= wdat["price"] and wdat["price"] > 0
-		var bg_col := Color(0.15, 0.22, 0.15, 0.92) if can_buy else Color(0.10, 0.10, 0.10, 0.8)
-		_draw_node.draw_rect(r, bg_col)
-		_draw_node.draw_rect(r, wdat["color"].lightened(0.2), false, 2.0)
-		_draw_node.draw_string(font, Vector2(cx + card_w * 0.5, cy + 45.0 * s),
-			wid.to_upper(), HORIZONTAL_ALIGNMENT_CENTER, -1, int(22.0 * s), wdat["color"])
-		var price_str := "FREE" if wdat["price"] == 0 else "$%d" % wdat["price"]
-		_draw_node.draw_string(font, Vector2(cx + card_w * 0.5, cy + card_h - 28.0 * s),
-			price_str, HORIZONTAL_ALIGNMENT_CENTER, -1, int(20.0 * s),
-			Color(1.0, 0.9, 0.3) if can_buy else Color(0.5, 0.5, 0.5))
 
-	_draw_node.draw_string(font, Vector2(vp.x * 0.5, vp.y - 80.0 * s),
-		"Tap weapon to buy  |  Tap outside to close", HORIZONTAL_ALIGNMENT_CENTER,
-		-1, int(20.0 * s), Color(0.7, 0.7, 0.7))
+# ── Shop overlay ───────────────────────────────────────────────────────────────
+func _draw_shop_overlay(s: float, font: Font) -> void:
+	_draw.draw_rect(Rect2(0,0,_vp.x,_vp.y), Color(0,0,0,0.82))
+	# Header
+	_draw.draw_rect(Rect2(0, 0, _vp.x, 230.0*s), Color(0.05,0.12,0.05,0.95))
+	_draw.draw_string(font, Vector2(_vp.x*0.5, 90.0*s),
+		"SHOP", HORIZONTAL_ALIGNMENT_CENTER, -1, int(42*s), Color(1.0,0.9,0.3))
+	_draw.draw_string(font, Vector2(_vp.x*0.5, 145.0*s),
+		"$%d" % money, HORIZONTAL_ALIGNMENT_CENTER, -1, int(30*s), Color(0.8,0.8,0.3))
+
+	# Close button (X)
+	var close_r := Rect2(_vp.x - 110*s, 70*s, 90*s, 90*s)
+	_draw.draw_rect(close_r, Color(0.7,0.1,0.1,0.8))
+	_draw.draw_rect(close_r, Color(1,0.4,0.4,0.7), false, 2.0)
+	_draw.draw_string(font, close_r.get_center() + Vector2(0, int(14*s)),
+		"✕", HORIZONTAL_ALIGNMENT_CENTER, -1, int(30*s), Color.WHITE)
+
+	# Weapon cards
+	var wl := Balance.WEAPON3D_ORDER
+	var cw := 200.0*s; var ch := 260.0*s; var pad := 22.0*s; var cols := 3
+	for i in range(wl.size()):
+		var wid: String = wl[i]
+		var wd: Dictionary = Balance.WEAPONS3D[wid]
+		var col_idx := i % cols; var row_idx := i / cols
+		var cx2 := 40.0*s + col_idx * (cw + pad)
+		var cy2 := 250.0*s + row_idx * (ch + pad)
+		var r := Rect2(cx2, cy2, cw, ch)
+		var can_buy := money >= wd["price"] or wd["price"] == 0
+		var bg := Color(0.12,0.20,0.12,0.94) if can_buy else Color(0.08,0.08,0.08,0.82)
+		_draw.draw_rect(r, bg)
+		_draw.draw_rect(r, wd["color"].lightened(0.2), false, 2.2)
+		_draw.draw_string(font, Vector2(r.get_center().x, r.position.y + 48*s),
+			wid.to_upper(), HORIZONTAL_ALIGNMENT_CENTER, -1, int(22*s), wd["color"])
+		# Stats
+		_draw.draw_string(font, Vector2(r.position.x+12*s, r.position.y + 90*s),
+			"DMG: %.0f" % wd["damage"], HORIZONTAL_ALIGNMENT_LEFT, -1, int(15*s), Color(0.9,0.5,0.3))
+		_draw.draw_string(font, Vector2(r.position.x+12*s, r.position.y + 114*s),
+			"AMM: %d" % wd["ammo"], HORIZONTAL_ALIGNMENT_LEFT, -1, int(15*s), Color(0.5,0.7,0.9))
+		_draw.draw_string(font, Vector2(r.position.x+12*s, r.position.y + 138*s),
+			"TYPE: " + ("HITSCAN" if wd["hitscan"] else "PROJ"), HORIZONTAL_ALIGNMENT_LEFT, -1, int(15*s), Color(0.7,0.7,0.7))
+		var price_str := "FREE" if wd["price"] == 0 else "$%d" % wd["price"]
+		_draw.draw_string(font, Vector2(r.get_center().x, r.end.y - 26*s),
+			price_str, HORIZONTAL_ALIGNMENT_CENTER, -1, int(20*s),
+			Color(1.0,0.9,0.3) if can_buy else Color(0.45,0.45,0.45))
+
+
+# ── Game over ──────────────────────────────────────────────────────────────────
+func _draw_game_over(s: float, font: Font) -> void:
+	_draw.draw_rect(Rect2(0,0,_vp.x,_vp.y), Color(0,0,0,0.92))
+	_draw.draw_string(font, Vector2(_vp.x*0.5, _vp.y*0.25),
+		"GAME  OVER", HORIZONTAL_ALIGNMENT_CENTER, -1, int(62*s), Color(1.0,0.15,0.15))
+	var stats := [
+		"Wave reached:  %d" % _go_wave,
+		"Enemies killed:  %d" % _go_kills,
+		"Score:  %d" % _go_score,
+	]
+	var sy := _vp.y * 0.42
+	for line in stats:
+		_draw.draw_string(font, Vector2(_vp.x*0.5, sy),
+			line, HORIZONTAL_ALIGNMENT_CENTER, -1, int(32*s), Color(0.9,0.9,0.9))
+		sy += 55.0*s
+	# Tap to restart hint
+	var pulse := sin(Time.get_ticks_msec()*0.005)*0.4+0.6
+	_draw.draw_string(font, Vector2(_vp.x*0.5, _vp.y*0.78),
+		"Tap to Restart", HORIZONTAL_ALIGNMENT_CENTER, -1, int(28*s),
+		Color(0.8,0.8,0.8,pulse))

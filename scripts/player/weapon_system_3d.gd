@@ -5,6 +5,7 @@ signal fired(weapon_id: String, from: Vector3, direction: Vector3)
 signal reloaded
 signal ammo_changed(current: int, max_ammo: int)
 signal hit_enemy(enemy: Node3D, damage: float, pos: Vector3)
+signal empty_clicked
 
 # ── State ──────────────────────────────────────────────────────────────────────
 var current_weapon: String = "ar"
@@ -202,6 +203,7 @@ func try_fire() -> void:
 	if is_reloading or fire_timer > 0.0:
 		return
 	if ammo <= 0:
+		emit_signal("empty_clicked")
 		start_reload()
 		return
 	var wdat: Dictionary = Balance.WEAPONS3D[current_weapon]

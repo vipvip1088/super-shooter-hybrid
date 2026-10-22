@@ -1,59 +1,63 @@
 ## game_manager_3d.gd — 3D game orchestrator.
-## NO typed class references (prevents cascade parse failures → gray screen).
+## NO typed user-class references (no cascade parse failures → no gray screen).
 extends Node3D
 
 # ── Untyped module refs ────────────────────────────────────────────────────────
-var world_gen        # WorldGenerator3D
-var player           # PlayerController3D
-var fx_manager       # FXManager3D
-var audio_gen        # AudioGenerator3D
-var hud              # HUD3D
-var save_mgr         # SaveManager
+var world_gen
+var player
+var fx_manager
+var audio_gen
+var hud
+var save_mgr
+var dmg_numbers   # DamageNumbers3D
 
-# ── Enemy / projectile containers ─────────────────────────────────────────────
+# ── Containers ─────────────────────────────────────────────────────────────────
 var enemies_node: Node3D
 var proj_node: Node3D
 var loot_node: Node3D
 
-# ── Live data ─────────────────────────────────────────────────────────────────
-var enemies: Array = []      # Array[EnemyAI3D]
-var projectiles: Array = []  # Array[Dictionary]
-var loot_items: Array = []   # Array[Dictionary]
+# ── Live arrays ────────────────────────────────────────────────────────────────
+var enemies: Array = []
+var projectiles: Array = []
+var loot_items: Array = []
 
-# ── Player stats ───────────────────────────────────────────────────────────────
+# ── Economy / meta ─────────────────────────────────────────────────────────────
 var p_money: int = 800
 var p_xp: int = 0
 var p_xp_to_next: int = 100
 var p_level: int = 1
 var p_kill_count: int = 0
-
-# ── Perk flags (mirrors PlayerController3D for GM logic) ──────────────────────
+var p_score: int = 0
 var p_loot_mult: float = 1.0
 var p_zone_resist: float = 0.0
 var p_kill_bonus: int = 0
+var _combo: int = 0
+var _combo_timer: float = 0.0
+const COMBO_WINDOW := 4.0
 
 # ── Wave state ─────────────────────────────────────────────────────────────────
 var wave: int = 0
-var wave_timer: float = 0.0
 var between_waves: bool = false
-var buy_phase: bool = false
-var buy_timer: float = 0.0
-var enemies_this_wave: int = 0
-var enemies_killed_wave: int = 0
+var between_timer: float = 0.0
+const BETWEEN_WAVE_TIME := 4.0
 var _spawn_queue: Array = []
 var _spawn_timer: float = 0.0
+const SPAWN_INTERVAL := 0.7
 
-# ── Zone state ─────────────────────────────────────────────────────────────────
+# ── Zone ───────────────────────────────────────────────────────────────────────
 var zone_center: Vector3 = Vector3.ZERO
 var zone_radius: float = Balance.ZONE3D_START_R
 var zone_target_radius: float = Balance.ZONE3D_START_R
 var zone_phase_idx: int = 0
 var zone_phase_timer: float = 0.0
-var zone_cylinder: MeshInstance3D
-var zone_mat: StandardMaterial3D
-var zone_inner_mat: StandardMaterial3D
+var _zone_cylinder: MeshInstance3D
+var _zone_mat: StandardMaterial3D
+var _zone_warn_light: OmniLight3D
 
-# ── Game flow ──────────────────────────────────────────────────────────────────
+# ── Fire state ─────────────────────────────────────────────────────────────────
+var _fire_active: bool = false
+
+# ── Flow ───────────────────────────────────────────────────────────────────────
 var running: bool = false
 var game_over: bool = false
 
@@ -62,27 +66,25 @@ func _ready() -> void:
 	_safe_build()
 
 
+# ── Construction ───────────────────────────────────────────────────────────────
 func _safe_build() -> void:
-	# World
+	# World first
 	var WG = load("res://scripts/world/world_generator_3d.gd")
-	world_gen = WG.new()
-	world_gen.name = "WorldGen"
+	world_gen = WG.new(); world_gen.name = "WorldGen"
 	add_child(world_gen)
 	world_gen.setup(self)
 	world_gen.generate()
 
 	# Containers
 	enemies_node = Node3D.new(); enemies_node.name = "Enemies"; add_child(enemies_node)
-	proj_node    = Node3D.new(); proj_node.name = "Projectiles"; add_child(proj_node)
-	loot_node    = Node3D.new(); loot_node.name = "Loot"; add_child(loot_node)
+	proj_node    = Node3D.new(); proj_node.name    = "Projs";   add_child(proj_node)
+	loot_node    = Node3D.new(); loot_node.name    = "Loot";    add_child(loot_node)
 
 	# Player
 	var PC = load("res://scripts/player/player_controller_3d.gd")
-	player = PC.new()
-	player.name = "Player"
-	player.position = Vector3(0, 0, 0)
-	player.collision_layer = 4
-	player.collision_mask = 1
+	player = PC.new(); player.name = "Player"
+	player.position = Vector3(0, 0, 2)
+	player.collision_layer = 4; player.collision_mask = 1
 	add_child(player)
 	player.setup(self)
 	player.took_damage.connect(_on_player_took_damage)
@@ -90,118 +92,124 @@ func _safe_build() -> void:
 
 	# FX
 	var FX = load("res://scripts/fx/fx_manager_3d.gd")
-	fx_manager = FX.new()
-	fx_manager.name = "FXManager"
-	add_child(fx_manager)
+	fx_manager = FX.new(); fx_manager.name = "FX"; add_child(fx_manager)
 	fx_manager.setup(self)
 
 	# Audio
 	var AG = load("res://scripts/audio/audio_generator_3d.gd")
-	audio_gen = AG.new()
-	audio_gen.name = "AudioGen"
-	add_child(audio_gen)
+	audio_gen = AG.new(); audio_gen.name = "Audio"; add_child(audio_gen)
 	audio_gen.setup(self)
+
+	# Damage numbers
+	var DN = load("res://scripts/core/damage_numbers.gd")
+	dmg_numbers = DN.new(); dmg_numbers.name = "DmgNumbers"; add_child(dmg_numbers)
 
 	# HUD
 	var HUD = load("res://scripts/ui/hud_3d.gd")
-	hud = HUD.new()
-	hud.name = "HUD3D"
-	add_child(hud)
+	hud = HUD.new(); hud.name = "HUD3D"; add_child(hud)
 	hud.setup(self)
-	hud.move_input.connect(func(d): player.set_move_input(d) if player else null)
-	hud.look_input.connect(func(d): player.add_look_delta(d) if player else null)
-	hud.fire_held.connect(_on_fire_held)
-	hud.reload_pressed.connect(_on_reload_pressed)
-	hud.dash_pressed.connect(_on_dash_pressed)
-	hud.ult_pressed.connect(_on_ult_pressed)
-	hud.weapon_next.connect(func(): player.weapon_system.cycle_weapon(1) if player else null)
-	hud.weapon_prev.connect(func(): player.weapon_system.cycle_weapon(-1) if player else null)
-	hud.perk_chosen.connect(_on_perk_chosen)
+	_connect_hud()
 
-	# Weapon system signals
-	player.weapon_system.ammo_changed.connect(func(c, m): hud.update_ammo(c, m))
+	# Save
+	var SM = load("res://scripts/core/save_manager.gd")
+	save_mgr = SM.new(); save_mgr.name = "SaveMgr"; add_child(save_mgr)
+
+	# Zone cylinder
+	_build_zone_cylinder()
+
+	# Wait one physics frame for NavigationServer3D to register the nav region
+	await get_tree().physics_frame
+
+	running = true
+	_start_wave()
+
+
+func _connect_hud() -> void:
+	hud.move_input.connect(   func(d):    if player: player.set_move_input(d))
+	hud.look_input.connect(   func(d):    if player: player.add_look_delta(d))
+	hud.fire_held.connect(    _on_fire_held)
+	hud.reload_pressed.connect(_on_reload_pressed)
+	hud.dash_pressed.connect( _on_dash_pressed)
+	hud.ult_pressed.connect(  _on_ult_pressed)
+	hud.weapon_next.connect(  func(): if player: player.weapon_system.cycle_weapon(1))
+	hud.weapon_prev.connect(  func(): if player: player.weapon_system.cycle_weapon(-1))
+	hud.perk_chosen.connect(  _on_perk_chosen)
+	hud.shop_buy.connect(     _on_shop_buy)
+	# Weapon signals → audio + FX
+	player.weapon_system.ammo_changed.connect(func(c,m): hud.update_ammo(c, m))
 	player.weapon_system.fired.connect(_on_weapon_fired)
 	player.weapon_system.hit_enemy.connect(_on_hit_enemy_fx)
-
-	# Save manager
-	var SM = load("res://scripts/core/save_manager.gd")
-	save_mgr = SM.new()
-	save_mgr.name = "SaveMgr"
-	add_child(save_mgr)
-
-	# Zone
-	_build_zone()
-
-	# Start
-	_start_wave()
-	running = true
+	player.weapon_system.empty_clicked.connect(func(): audio_gen.play_empty())
 
 
-# ── Zone ───────────────────────────────────────────────────────────────────────
-func _build_zone() -> void:
-	# Outer warning wall (large cylinder, inside-visible)
-	zone_mat = StandardMaterial3D.new()
-	zone_mat.albedo_color = Color(0.2, 0.8, 1.0, 0.12)
-	zone_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	zone_mat.emission_enabled = true
-	zone_mat.emission = Color(0.2, 0.8, 1.0, 0.5)
-	zone_mat.emission_energy_multiplier = 0.8
-	zone_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	zone_mat.roughness = 0.0
+# ── Zone cylinder ──────────────────────────────────────────────────────────────
+func _build_zone_cylinder() -> void:
+	_zone_mat = StandardMaterial3D.new()
+	_zone_mat.albedo_color        = Color(0.2, 0.85, 1.0, 0.13)
+	_zone_mat.transparency        = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_zone_mat.emission_enabled    = true
+	_zone_mat.emission            = Color(0.2, 0.85, 1.0)
+	_zone_mat.emission_energy_multiplier = 0.9
+	_zone_mat.cull_mode           = BaseMaterial3D.CULL_DISABLED
+	_zone_mat.roughness           = 0.0
 
-	var seg = 40
-	zone_cylinder = MeshInstance3D.new()
-	zone_cylinder.name = "ZoneCylinder"
-	var cyl = CylinderMesh.new()
-	cyl.top_radius = zone_radius
+	_zone_cylinder = MeshInstance3D.new()
+	_zone_cylinder.name = "ZoneWall"
+	var cyl := CylinderMesh.new()
+	cyl.top_radius    = zone_radius
 	cyl.bottom_radius = zone_radius
-	cyl.height = Balance.ARENA_WALL_H * 1.5
-	cyl.radial_segments = seg
-	cyl.rings = 1
-	zone_cylinder.mesh = cyl
-	zone_cylinder.material_override = zone_mat
-	zone_cylinder.position = Vector3(zone_center.x, Balance.ARENA_WALL_H * 0.75, zone_center.z)
-	zone_cylinder.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(zone_cylinder)
+	cyl.height        = Balance.ARENA_WALL_H * 1.6
+	cyl.radial_segments = 48; cyl.rings = 1
+	_zone_cylinder.mesh = cyl
+	_zone_cylinder.material_override = _zone_mat
+	_zone_cylinder.position = Vector3(0, Balance.ARENA_WALL_H * 0.8, 0)
+	_zone_cylinder.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_zone_cylinder)
+
+	_zone_warn_light = OmniLight3D.new()
+	_zone_warn_light.light_color = Color(1.0, 0.2, 0.1)
+	_zone_warn_light.light_energy = 0.0
+	_zone_warn_light.omni_range = 8.0
+	_zone_warn_light.shadow_enabled = false
+	add_child(_zone_warn_light)
 
 	if Balance.ZONE3D_PHASES.size() > 0:
 		var ph: Dictionary = Balance.ZONE3D_PHASES[0]
-		zone_target_radius = Balance.ZONE3D_START_R * ph["end_ratio"]
-		zone_phase_timer = ph["duration"]
+		zone_target_radius = Balance.ZONE3D_START_R * float(ph["end_ratio"])
+		zone_phase_timer   = float(ph["duration"])
 
 
 # ── Wave management ────────────────────────────────────────────────────────────
 func _start_wave() -> void:
 	wave += 1
 	between_waves = false
-	buy_phase = false
-	enemies_killed_wave = 0
-
-	var hp_scale := 1.0 + wave * Balance.HP3D_SCALE
 	var types := _get_wave_enemy_types()
-	enemies_this_wave = types.size()
-
 	_spawn_queue = types.duplicate()
 	_spawn_timer = 0.0
+	hud.update_wave(wave, _spawn_queue.size() + enemies.size())
+	hud.add_kill_feed("── Wave %d ──" % wave)
+	audio_gen.play_levelup()
 
-	hud.update_wave(wave, enemies_this_wave)
-	hud.add_kill_feed("Wave %d starts!" % wave)
+	# Spawn 3 enemies immediately at wave start
+	for _i in range(mini(3, _spawn_queue.size())):
+		_spawn_next_enemy()
 
 
 func _get_wave_enemy_types() -> Array:
 	var count := Balance.WAVE3D_BASE + (wave - 1) * Balance.WAVE3D_STEP
 	var result: Array = []
-	var pool := ["rusher", "rusher", "rusher", "sniper_e", "tank", "kamikaze"]
 	if wave >= Balance.BOSS3D_WAVE and wave % Balance.BOSS3D_WAVE == 0:
 		result.append("boss")
-		count = maxi(count - 2, 1)
+		count = maxi(count - 3, 1)
+	var pool := ["rusher","rusher","rusher","sniper_e","tank","kamikaze","rusher","sniper_e"]
 	for i in range(count):
 		result.append(pool[i % pool.size()])
+	result.shuffle()
 	return result
 
 
-func _spawn_enemy_from_queue() -> void:
-	if _spawn_queue.is_empty():
+func _spawn_next_enemy() -> void:
+	if _spawn_queue.is_empty() or not world_gen:
 		return
 	var etype: String = _spawn_queue.pop_front()
 	var spawn_pos: Vector3 = world_gen.get_random_spawn()
@@ -209,109 +217,127 @@ func _spawn_enemy_from_queue() -> void:
 
 	var EA = load("res://scripts/enemies/enemy_ai_3d.gd")
 	var enemy = EA.new()
-	enemy.name = "Enemy_%s_%d" % [etype, wave]
+	enemy.name = "E_%s_%d_%d" % [etype, wave, enemies.size()]
 	enemy.position = spawn_pos
 	enemies_node.add_child(enemy)
 	enemy.setup(etype, self, player, hp_mult)
 	enemy.died.connect(_on_enemy_died)
 	enemies.append(enemy)
+	hud.update_wave(wave, enemies.size() + _spawn_queue.size())
 
 
-# ── Process ────────────────────────────────────────────────────────────────────
+# ── Main loop ──────────────────────────────────────────────────────────────────
 func _process(delta: float) -> void:
-	if not running or game_over:
+	if not running:
 		return
+
+	# ── Continuous fire ──────────────────────────────────────────────────────
+	if _fire_active and player and is_instance_valid(player) and not game_over:
+		player.weapon_system.try_fire()
+
+	if game_over:
+		return
+
+	_update_combo(delta)
 	_update_spawn_queue(delta)
 	_update_projectiles(delta)
 	_update_loot(delta)
 	_update_zone(delta)
+	_update_between_waves(delta)
 	_update_hud()
-	_check_wave_clear()
+
+
+func _update_combo(delta: float) -> void:
+	if _combo > 0:
+		_combo_timer -= delta
+		if _combo_timer <= 0.0:
+			_combo = 0
 
 
 func _update_spawn_queue(delta: float) -> void:
-	if _spawn_queue.is_empty():
+	if _spawn_queue.is_empty() or between_waves:
 		return
 	_spawn_timer -= delta
 	if _spawn_timer <= 0.0:
-		_spawn_timer = 0.8
-		_spawn_enemy_from_queue()
+		_spawn_timer = SPAWN_INTERVAL
+		_spawn_next_enemy()
+
+
+func _update_between_waves(delta: float) -> void:
+	if not between_waves:
+		return
+	between_timer -= delta
+	if between_timer <= 0.0:
+		between_waves = false
+		_start_wave()
 
 
 func _update_projectiles(delta: float) -> void:
 	for i in range(projectiles.size() - 1, -1, -1):
 		var p: Dictionary = projectiles[i]
-		var node: Node3D = p.get("node")
-		if not is_instance_valid(node):
-			projectiles.remove_at(i)
-			continue
+		var nd: Node3D = p.get("node")
+		if not is_instance_valid(nd):
+			projectiles.remove_at(i); continue
 
 		p["traveled"] += p["speed"] * delta
-		var move := p["dir"] * p["speed"] * delta
-		node.position += move
+		nd.position += p["dir"] * p["speed"] * delta
 
-		# Check collision with enemies
+		# Rotate projectile
+		nd.rotate_object_local(Vector3.UP, delta * 8.0)
+
 		var hit := false
 		if p.get("from_enemy", false):
-			# Enemy projectile hits player
 			if player and is_instance_valid(player):
-				var d := node.global_position.distance_to(player.global_position)
-				if d < 1.0:
+				if nd.global_position.distance_to(player.global_position) < 1.1:
 					player.apply_damage(p["damage"])
-					audio_gen.play_hurt()
 					hit = true
 		else:
-			# Player projectile hits enemies
-			for enemy in enemies:
-				if not is_instance_valid(enemy):
-					continue
-				var d := node.global_position.distance_to(enemy.global_position)
-				if d < 1.5:
+			for enemy in enemies.duplicate():
+				if not is_instance_valid(enemy): continue
+				if nd.global_position.distance_to(enemy.global_position) < 1.6:
 					if p["aoe"] > 0.0:
-						create_explosion_3d(node.global_position, p["aoe"], p["damage"])
+						create_explosion_3d(nd.global_position, p["aoe"], p["damage"])
+						hit = true; break
 					else:
 						enemy.take_damage(p["damage"])
-					hit = true
-					break
+						if dmg_numbers:
+							dmg_numbers.spawn(nd.global_position + Vector3(0,1.5,0),
+								int(p["damage"]))
+						hit = true; break
 
 		if hit or p["traveled"] >= p["max_range"]:
-			if p["aoe"] > 0.0 and not p.get("from_enemy", false):
-				create_explosion_3d(node.global_position, p["aoe"], p["damage"])
-			node.queue_free()
+			if p["aoe"] > 0.0 and not p.get("from_enemy", false) and not hit:
+				create_explosion_3d(nd.global_position, p["aoe"], p["damage"])
+			nd.queue_free()
 			projectiles.remove_at(i)
 
 
 func _update_loot(delta: float) -> void:
 	for i in range(loot_items.size() - 1, -1, -1):
 		var item: Dictionary = loot_items[i]
-		var node: Node3D = item.get("node")
-		if not is_instance_valid(node):
-			loot_items.remove_at(i)
-			continue
+		var nd: Node3D = item.get("node")
+		if not is_instance_valid(nd):
+			loot_items.remove_at(i); continue
 		item["timer"] -= delta
-		# Float animation
-		var bob := sin(Time.get_ticks_msec() * 0.003 + item["phase"]) * 0.12
-		node.position.y = 0.5 + bob
+		# Bob animation
+		nd.position.y = 0.55 + sin(Time.get_ticks_msec() * 0.003 + item["phase"]) * 0.14
+		nd.rotate_y(delta * 1.5)
 
-		# Magnet pull
 		if player and is_instance_valid(player):
-			var d := node.global_position.distance_to(player.global_position)
-			var mm: float = player.p_magnet_mult
-			var magnet_r := 5.0 * mm
+			var d := nd.global_position.distance_to(player.global_position)
+			var magnet_r := 5.5 * float(player.p_magnet_mult)
 			if d < magnet_r:
-				var dir := (player.global_position - node.global_position).normalized()
-				var pull := lerpf(5.0, 18.0, 1.0 - d / maxf(magnet_r, 0.1))
-				node.position += dir * pull * delta
-
-			if d < 1.0:
+				var pull_dir := (player.global_position - nd.global_position).normalized()
+				var pull_speed := lerpf(6.0, 22.0, 1.0 - d / maxf(magnet_r, 0.1))
+				nd.position += pull_dir * pull_speed * delta
+			if d < 1.2:
 				_collect_loot(item)
-				node.queue_free()
+				nd.queue_free()
 				loot_items.remove_at(i)
 				continue
 
 		if item["timer"] <= 0.0:
-			node.queue_free()
-			loot_items.remove_at(i)
+			nd.queue_free(); loot_items.remove_at(i)
 
 
 func _update_zone(delta: float) -> void:
@@ -320,102 +346,117 @@ func _update_zone(delta: float) -> void:
 	zone_phase_timer -= delta
 	var ph: Dictionary = Balance.ZONE3D_PHASES[zone_phase_idx]
 
-	# Shrink zone
-	zone_radius = lerpf(zone_radius, zone_target_radius, delta * 0.4)
-	_update_zone_cylinder()
+	zone_radius = lerpf(zone_radius, zone_target_radius, delta * 0.35)
+	_update_zone_visual()
 
-	# Damage player outside zone
 	if player and is_instance_valid(player):
-		var d2d := Vector2(player.global_position.x, player.global_position.z)
-		var zc2d := Vector2(zone_center.x, zone_center.z)
-		var in_zone := d2d.distance_to(zc2d) <= zone_radius
+		var pp := Vector2(player.global_position.x, player.global_position.z)
+		var zc := Vector2(zone_center.x, zone_center.z)
+		var in_zone := pp.distance_to(zc) <= zone_radius
 		hud.set_zone_warning(not in_zone)
 		if not in_zone:
-			player.apply_damage(ph["damage"] * delta)
+			var resist_mult := 1.0 - p_zone_resist
+			player.apply_damage(ph["damage"] * delta * resist_mult)
+			_zone_warn_light.global_position = player.global_position
+			_zone_warn_light.light_energy = lerpf(_zone_warn_light.light_energy, 3.0, delta * 5.0)
+		else:
+			_zone_warn_light.light_energy = lerpf(_zone_warn_light.light_energy, 0.0, delta * 5.0)
 
 	if zone_phase_timer <= 0.0:
 		zone_phase_idx += 1
 		if zone_phase_idx < Balance.ZONE3D_PHASES.size():
-			var next_ph: Dictionary = Balance.ZONE3D_PHASES[zone_phase_idx]
-			zone_target_radius = Balance.ZONE3D_START_R * next_ph["end_ratio"]
-			zone_phase_timer = next_ph["duration"]
+			var nph: Dictionary = Balance.ZONE3D_PHASES[zone_phase_idx]
+			zone_target_radius = Balance.ZONE3D_START_R * float(nph["end_ratio"])
+			zone_phase_timer   = float(nph["duration"])
 
 
-func _update_zone_cylinder() -> void:
-	if not zone_cylinder:
-		return
-	var mesh: CylinderMesh = zone_cylinder.mesh
-	mesh.top_radius = zone_radius
+func _update_zone_visual() -> void:
+	if not _zone_cylinder: return
+	var mesh: CylinderMesh = _zone_cylinder.mesh
+	mesh.top_radius    = zone_radius
 	mesh.bottom_radius = zone_radius
-	# Pulse glow
-	var pulse := sin(Time.get_ticks_msec() * 0.003) * 0.15 + 0.8
-	zone_mat.emission_energy_multiplier = pulse
+	var pulse := sin(Time.get_ticks_msec() * 0.003) * 0.15 + 0.85
+	_zone_mat.emission_energy_multiplier = pulse
 
 
 func _update_hud() -> void:
-	if not hud:
-		return
-	hud.update_hp(player.hp, player.max_hp)
-	hud.shield = player.p_shield
+	if not hud: return
+	if player and is_instance_valid(player):
+		hud.update_hp(player.hp, player.max_hp)
+		hud.shield  = player.p_shield
+		hud.update_weapon(player.weapon_system.current_weapon)
+		hud.update_reload(player.weapon_system.is_reloading,
+			player.weapon_system.reload_progress)
+		hud.update_dash_cd(player.dash_cd)
 	hud.update_xp(p_xp, p_xp_to_next, p_level)
 	hud.update_money(p_money)
-	hud.update_weapon(player.weapon_system.current_weapon)
-	hud.update_reload(player.weapon_system.is_reloading, player.weapon_system.reload_progress)
-	hud.update_dash_cd(player.dash_cd)
-	hud.enemy_count = enemies.size()
+	hud.score  = p_score
+	hud.combo  = _combo
+	hud.enemy_count = enemies.size() + _spawn_queue.size()
 
 
 func _check_wave_clear() -> void:
-	if _spawn_queue.is_empty() and enemies.is_empty():
-		if not between_waves:
-			between_waves = true
-			_on_wave_clear()
-
-
-func _on_wave_clear() -> void:
-	p_money += Balance.ROUND_SURVIVAL_BONUS
-	hud.add_kill_feed("Wave %d cleared! +$%d" % [wave, Balance.ROUND_SURVIVAL_BONUS])
-	audio_gen.play_levelup()
-	# Brief pause then next wave
-	var t = get_tree().create_timer(3.5)
-	t.timeout.connect(_start_wave)
+	if _spawn_queue.is_empty() and enemies.is_empty() and not between_waves:
+		between_waves = true
+		between_timer = BETWEEN_WAVE_TIME
+		p_money += Balance.ROUND_SURVIVAL_BONUS
+		hud.add_kill_feed("Wave %d clear!  +$%d" % [wave, Balance.ROUND_SURVIVAL_BONUS])
+		audio_gen.play_levelup()
+		hud.show_shop_between_waves()
 
 
 # ── Callbacks ──────────────────────────────────────────────────────────────────
 func _on_enemy_died(enemy: Node3D, reward: int, xp: int, pos: Vector3) -> void:
 	enemies.erase(enemy)
-	p_money += int(reward * p_loot_mult)
-	p_money += p_kill_bonus
+	_check_wave_clear()
+
+	_combo += 1
+	_combo_timer = COMBO_WINDOW
+	var mult := 1.0 + (_combo - 1) * 0.1
+	var actual_reward := int(reward * p_loot_mult * mult)
+	p_money += actual_reward + p_kill_bonus
+	p_score += actual_reward * 10
 	p_kill_count += 1
+
 	if player and is_instance_valid(player) and player.p_vampire > 0.0:
 		player.hp = minf(player.hp + player.p_vampire, player.max_hp)
+
 	_add_xp(xp)
 	_spawn_loot(pos)
 	audio_gen.play_kill()
-	hud.add_kill_feed("+$%d" % reward)
-	hud.update_wave(wave, enemies.size())
+	if _combo >= 3:
+		hud.add_kill_feed("%dx Combo! +$%d" % [_combo, actual_reward])
+	elif _combo >= 2:
+		hud.add_kill_feed("Double kill  +$%d" % actual_reward)
+	else:
+		hud.add_kill_feed("+$%d" % actual_reward)
+	hud.update_wave(wave, enemies.size() + _spawn_queue.size())
 
 
 func _on_player_took_damage(amount: float) -> void:
 	audio_gen.play_hurt()
 	if hud:
 		hud.update_hp(player.hp, player.max_hp)
+		hud.trigger_hit_flash()
 
 
 func _on_player_died() -> void:
-	running = false
-	game_over = true
+	running = false; game_over = true
+	_fire_active = false
 	if save_mgr:
 		save_mgr.save_run_result(wave, p_kill_count, 0)
-	_show_game_over()
+	if hud:
+		hud.show_game_over(wave, p_kill_count, p_score)
+	audio_gen.play_hurt()
+	var t := get_tree().create_timer(5.0)
+	t.timeout.connect(func(): get_tree().reload_current_scene())
 
 
 func _on_fire_held(state: bool) -> void:
-	if not player or not is_instance_valid(player):
-		return
-	if state:
+	_fire_active = state
+	if state and player and is_instance_valid(player):
+		# Immediate first shot on press
 		player.weapon_system.try_fire()
-		audio_gen.play_shoot(player.weapon_system.current_weapon)
 
 
 func _on_reload_pressed() -> void:
@@ -431,209 +472,251 @@ func _on_dash_pressed() -> void:
 
 
 func _on_ult_pressed() -> void:
-	pass  # TODO: hero ultimates in next iteration
+	pass  # TODO: hero ultimates
 
 
-func _on_perk_chosen(perk_key: String) -> void:
-	if not hud:
-		return
-	hud._show_perk = false
-	var perk: Dictionary = Balance.PERKS.get(perk_key, {})
-	var effect: String = perk.get("effect", "")
-	var value: float = perk.get("value", 0.0)
-	if not player or not is_instance_valid(player):
-		return
-	match effect:
-		"max_hp":      player.max_hp += value; player.hp = minf(player.hp + value, player.max_hp)
-		"speed_mult":  player.p_speed_mult *= value
-		"loot_mult":   p_loot_mult *= value
-		"zone_resist": p_zone_resist += value
-		"kill_bonus":  p_kill_bonus += int(value)
-		"vampire":     player.p_vampire += value
-		"double_shot": player.p_double_shot = true
-		"shield":      player.p_shield += value
-		"explosive":   player.p_explosive_rds = true
-		"magnet":      player.p_magnet_mult *= value
-		"berserker":   player.p_last_stand = true
-	hud.add_kill_feed("Perk: " + perk.get("name", perk_key))
+func _on_weapon_fired(weapon_id: String, from: Vector3, dir: Vector3) -> void:
+	audio_gen.play_shoot(weapon_id)
+	if fx_manager:
+		fx_manager.spawn_muzzle_flash(from, Balance.WEAPONS3D[weapon_id]["color"])
+	# Bullet decal for hitscan
+	if Balance.WEAPONS3D[weapon_id]["hitscan"]:
+		_cast_decal_ray(from, dir, Balance.WEAPONS3D[weapon_id]["range"])
+
+
+func _cast_decal_ray(from: Vector3, dir: Vector3, range_m: float) -> void:
+	if not fx_manager: return
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(from, from + dir * range_m, 1)
+	if player: q.exclude = [player]
+	var result := space.intersect_ray(q)
+	if not result.is_empty():
+		fx_manager.spawn_hit(result["position"], result["normal"])
+		fx_manager.spawn_bullet_hole(result["position"], result["normal"])
 
 
 func _on_hit_enemy_fx(enemy: Node3D, damage: float, pos: Vector3) -> void:
 	if fx_manager:
-		var col: Color = Balance.ENEMIES3D.get(
-			enemy.get("type") if enemy.has_method("get") else "rusher", {}
-		).get("color", Color(1.0, 0.3, 0.1))
-		fx_manager.spawn_blood_hit(pos, col)
+		var ecol := Color(1.0, 0.3, 0.1)
+		if enemy.has_method("get_body_color"):
+			ecol = enemy.get_body_color()
+		fx_manager.spawn_blood_hit(pos, ecol)
 	audio_gen.play_hit_enemy()
+	if dmg_numbers:
+		dmg_numbers.spawn(pos + Vector3(0, 1.0, 0), int(damage))
 
 
-func _on_weapon_fired(weapon_id: String, from: Vector3, dir: Vector3) -> void:
-	if fx_manager:
-		fx_manager.spawn_muzzle_flash(from, Balance.WEAPONS3D[weapon_id]["color"])
-	# Hit scan: bullet decal
-	if Balance.WEAPONS3D[weapon_id]["hitscan"] and fx_manager:
-		var space := get_world_3d().direct_space_state
-		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 80.0, 1)
-		var result := space.intersect_ray(q)
-		if not result.is_empty():
-			fx_manager.spawn_bullet_hole(result["position"], result["normal"])
-
-
-# ── Player damaged by enemy direct call ───────────────────────────────────────
+# ── Player damaged by enemy ────────────────────────────────────────────────────
 func on_player_damaged(amount: float) -> void:
 	audio_gen.play_hurt()
-	if hud:
-		hud.update_hp(player.hp, player.max_hp)
+	if hud: hud.update_hp(player.hp, player.max_hp)
 
 
-# ── Surface hit (world) ────────────────────────────────────────────────────────
-func on_hit_surface(pos: Vector3, normal: Vector3, _collider: Object) -> void:
+func on_hit_surface(pos: Vector3, normal: Vector3, _col: Object) -> void:
 	if fx_manager:
 		fx_manager.spawn_hit(pos, normal)
 		fx_manager.spawn_bullet_hole(pos, normal)
 
 
-# ── Projectiles ────────────────────────────────────────────────────────────────
-func spawn_projectile_3d(origin: Vector3, dir: Vector3, speed: float, max_range: float,
-		damage: float, aoe: float, col: Color, weapon_id: String) -> void:
-	var mi = MeshInstance3D.new()
-	var sm = SphereMesh.new()
-	sm.radius = 0.18; sm.height = 0.36
+# ── Perk chosen ────────────────────────────────────────────────────────────────
+func _on_perk_chosen(perk_key: String) -> void:
+	var perk: Dictionary = Balance.PERKS.get(perk_key, {})
+	var effect: String  = perk.get("effect", "")
+	var value: float    = perk.get("value",  0.0)
+	if not player or not is_instance_valid(player): return
+	match effect:
+		"max_hp":    player.max_hp += value; player.hp = minf(player.hp + value, player.max_hp)
+		"speed_mult":player.p_speed_mult = maxf(0.5, player.p_speed_mult * value)
+		"loot_mult": p_loot_mult *= value
+		"zone_resist":p_zone_resist = minf(p_zone_resist + value, 0.9)
+		"kill_bonus":p_kill_bonus += int(value)
+		"vampire":   player.p_vampire += value
+		"double_shot":player.p_double_shot = true
+		"shield":    player.p_shield += value
+		"explosive": player.p_explosive_rds = true
+		"magnet":    player.p_magnet_mult *= value
+		"berserker": player.p_last_stand = true
+		"ammo_mult":
+			var ws := player.weapon_system
+			ws.max_ammo = int(ws.max_ammo * value)
+			ws.ammo = ws.max_ammo
+			hud.update_ammo(ws.ammo, ws.max_ammo)
+		"reload_mult":
+			pass  # handled at fire time
+	hud.add_kill_feed("+ " + perk.get("name", perk_key))
+	audio_gen.play_buy()
+
+
+# ── Shop buy ───────────────────────────────────────────────────────────────────
+func _on_shop_buy(weapon_id: String) -> void:
+	if not Balance.WEAPONS3D.has(weapon_id): return
+	if not player or not is_instance_valid(player): return
+	var price: int = Balance.WEAPONS3D[weapon_id]["price"]
+	if p_money < price:
+		hud.add_kill_feed("Not enough money!")
+		return
+	p_money -= price
+	player.weapon_system.equip(weapon_id)
+	hud.add_kill_feed("Equipped: " + weapon_id.to_upper())
+	audio_gen.play_buy()
+
+
+# ── Projectile spawning ────────────────────────────────────────────────────────
+func spawn_projectile_3d(origin: Vector3, dir: Vector3, speed: float,
+		max_range: float, damage: float, aoe: float, col: Color, wid: String) -> void:
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.20; sm.height = 0.40
+	sm.radial_segments = 6; sm.rings = 3
 	mi.mesh = sm
-	var mat = StandardMaterial3D.new()
+	var mat := StandardMaterial3D.new()
 	mat.albedo_color = col
-	mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 2.0
+	mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 2.5
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.global_position = origin
 	proj_node.add_child(mi)
+
+	# Trail light
+	var trail_l := OmniLight3D.new()
+	trail_l.light_color = col; trail_l.light_energy = 2.0
+	trail_l.omni_range = 3.0; trail_l.shadow_enabled = false
+	mi.add_child(trail_l)
+
 	projectiles.append({
-		"node": mi, "dir": dir, "speed": speed,
+		"node": mi, "dir": dir.normalized(), "speed": speed,
 		"max_range": max_range, "traveled": 0.0,
-		"damage": damage, "aoe": aoe,
-		"from_enemy": false, "weapon": weapon_id,
+		"damage": damage, "aoe": aoe, "from_enemy": false, "weapon": wid,
 	})
 
 
-func spawn_enemy_projectile(origin: Vector3, dir: Vector3, damage: float, _type: String) -> void:
-	var mi = MeshInstance3D.new()
-	var sm = SphereMesh.new(); sm.radius = 0.14; sm.height = 0.28
+func spawn_enemy_projectile(origin: Vector3, dir: Vector3, dmg: float, _etype: String) -> void:
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.13; sm.height = 0.26
 	mi.mesh = sm
-	var mat = StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.3, 0.1)
-	mat.emission_enabled = true; mat.emission = Color(1.0, 0.2, 0.0)
-	mat.emission_energy_multiplier = 1.5
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.25, 0.05)
+	mat.emission_enabled = true; mat.emission = Color(1.0, 0.15, 0.0)
+	mat.emission_energy_multiplier = 2.0
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.global_position = origin
 	proj_node.add_child(mi)
 	projectiles.append({
-		"node": mi, "dir": dir, "speed": 16.0,
-		"max_range": 35.0, "traveled": 0.0,
-		"damage": damage, "aoe": 0.0, "from_enemy": true,
+		"node": mi, "dir": dir.normalized(), "speed": 15.0,
+		"max_range": 38.0, "traveled": 0.0,
+		"damage": dmg, "aoe": 0.0, "from_enemy": true,
 	})
 
 
 # ── Explosions ─────────────────────────────────────────────────────────────────
 func create_explosion_3d(pos: Vector3, radius: float, damage: float) -> void:
-	if fx_manager:
-		fx_manager.spawn_explosion(pos, radius)
+	if fx_manager: fx_manager.spawn_explosion(pos, radius)
 	audio_gen.play_explosion()
 	if player and is_instance_valid(player):
 		var d := pos.distance_to(player.global_position)
 		if d < radius:
-			var falloff := 1.0 - clampf(d / radius, 0.0, 1.0) * 0.5
-			player.apply_damage(damage * falloff)
-			player.add_camera_shake(1.2)
-	for enemy in enemies:
-		if not is_instance_valid(enemy):
-			continue
-		var d := pos.distance_to(enemy.global_position)
+			player.apply_damage(damage * (1.0 - clampf(d/radius,0.0,1.0)*0.5))
+			player.add_camera_shake(1.4)
+	for e in enemies.duplicate():
+		if not is_instance_valid(e): continue
+		var d := pos.distance_to(e.global_position)
 		if d < radius:
-			var falloff := 1.0 - clampf(d / radius, 0.0, 1.0) * 0.5
-			enemy.take_damage(damage * falloff)
+			e.take_damage(damage * (1.0 - clampf(d/radius,0.0,1.0)*0.5))
+	# Chain-react nearby barrels
+	for barrel in get_tree().get_nodes_in_group("explosive_barrel"):
+		if not is_instance_valid(barrel): continue
+		if pos.distance_to(barrel.global_position) < radius * 1.2:
+			explode_barrel(barrel)
 
 
 func explode_barrel(barrel: Node3D) -> void:
-	if not is_instance_valid(barrel):
-		return
-	var r: float = barrel.get_meta("explode_radius", 6.0)
-	var d: float = barrel.get_meta("explode_damage", 80.0)
-	create_explosion_3d(barrel.global_position, r, d)
+	if not is_instance_valid(barrel): return
+	barrel.remove_from_group("explosive_barrel")  # prevent infinite loop
+	create_explosion_3d(barrel.global_position,
+		barrel.get_meta("explode_radius", 6.0),
+		barrel.get_meta("explode_damage", 80.0))
 	barrel.queue_free()
 
 
-# ── Loot ───────────────────────────────────────────────────────────────────────
+# ── Loot spawning ──────────────────────────────────────────────────────────────
 func _spawn_loot(pos: Vector3) -> void:
-	var loot_types := [
-		{"type": "money", "chance": 1.0,  "value": randi_range(40, 140)},
-		{"type": "health","chance": 0.20, "value": 25},
-		{"type": "ammo",  "chance": 0.35, "value": 1},
+	var drops := [
+		{"type":"money",  "chance":1.0,  "val":randi_range(40,140)},
+		{"type":"health", "chance":0.22, "val":25},
+		{"type":"ammo",   "chance":0.38, "val":1},
 	]
-	for lt in loot_types:
-		if randf() < lt["chance"] * p_loot_mult:
-			_spawn_loot_item(pos + Vector3(randf_range(-1.0, 1.0), 0, randf_range(-1.0, 1.0)),
-				lt["type"], lt["value"])
+	for d in drops:
+		if randf() < float(d["chance"]) * p_loot_mult:
+			var offset := Vector3(randf_range(-1.2,1.2), 0, randf_range(-1.2,1.2))
+			_spawn_loot_node(pos + offset, d["type"], d["val"])
 
 
-func _spawn_loot_item(pos: Vector3, type: String, value: int) -> void:
-	var mi = MeshInstance3D.new()
-	var mesh: Mesh
+func _spawn_loot_node(pos: Vector3, ltype: String, val: int) -> void:
+	var mi := MeshInstance3D.new()
 	var col: Color
-	match type:
+	match ltype:
 		"money":
-			mesh = SphereMesh.new()
-			(mesh as SphereMesh).radius = 0.18; (mesh as SphereMesh).height = 0.36
+			var sm := SphereMesh.new(); sm.radius = 0.18; sm.height = 0.36
+			sm.radial_segments = 8; sm.rings = 4; mi.mesh = sm
 			col = Color(1.0, 0.9, 0.0)
 		"health":
-			mesh = BoxMesh.new(); (mesh as BoxMesh).size = Vector3(0.28, 0.28, 0.28)
-			col = Color(0.1, 0.9, 0.2)
+			var bm := BoxMesh.new(); bm.size = Vector3(0.28, 0.28, 0.28); mi.mesh = bm
+			col = Color(0.1, 0.92, 0.2)
 		"ammo":
-			mesh = CylinderMesh.new()
-			(mesh as CylinderMesh).top_radius = 0.08; (mesh as CylinderMesh).bottom_radius = 0.10
-			(mesh as CylinderMesh).height = 0.22
-			col = Color(0.9, 0.85, 0.2)
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.08; cm.bottom_radius = 0.10; cm.height = 0.24
+			cm.radial_segments = 8; mi.mesh = cm
+			col = Color(0.95, 0.85, 0.2)
 		_:
-			mesh = SphereMesh.new(); col = Color(0.7, 0.7, 0.7)
-	mi.mesh = mesh
-	var mat = StandardMaterial3D.new()
+			var sm2 := SphereMesh.new(); sm2.radius = 0.16; mi.mesh = sm2
+			col = Color(0.7, 0.7, 0.7)
+	var mat := StandardMaterial3D.new()
 	mat.albedo_color = col
-	mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 0.6
+	mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 0.55
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.position = pos + Vector3(0, 0.5, 0)
+	mi.position = pos + Vector3(0, 0.55, 0)
+	# Spin rings for money
+	if ltype == "money":
+		var ring_mat := StandardMaterial3D.new()
+		ring_mat.albedo_color = Color(0.8, 0.65, 0.0)
+		ring_mat.emission_enabled = true; ring_mat.emission = Color(0.8,0.65,0.0)
+		ring_mat.emission_energy_multiplier = 0.4
+		var rm := MeshInstance3D.new()
+		var tor := TorusMesh.new(); tor.inner_radius = 0.16; tor.outer_radius = 0.22
+		tor.rings = 16; tor.ring_segments = 6
+		rm.mesh = tor; rm.material_override = ring_mat
+		rm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.add_child(rm)
 	loot_node.add_child(mi)
 	loot_items.append({
-		"node": mi, "type": type, "value": value,
+		"node": mi, "type": ltype, "value": val,
 		"timer": Balance.LOOT_DESPAWN_TIME,
 		"phase": randf_range(0, TAU),
 	})
 
 
 func _collect_loot(item: Dictionary) -> void:
-	if not player or not is_instance_valid(player):
-		return
+	if not player or not is_instance_valid(player): return
 	match item["type"]:
 		"money":  p_money += item["value"]
-		"health": player.hp = minf(player.hp + item["value"], player.max_hp)
+		"health": player.hp = minf(player.hp + float(item["value"]), player.max_hp)
 		"ammo":
-			player.weapon_system.ammo = mini(
-				player.weapon_system.ammo + player.weapon_system.max_ammo,
-				player.weapon_system.max_ammo
-			)
+			var ws := player.weapon_system
+			ws.ammo = mini(ws.ammo + ws.max_ammo, ws.max_ammo)
+			hud.update_ammo(ws.ammo, ws.max_ammo)
 	audio_gen.play_pickup(item["type"])
 	if fx_manager:
 		fx_manager.spawn_pickup_sparkle(item["node"].global_position)
 
 
-# ── XP / Level up ──────────────────────────────────────────────────────────────
+# ── XP / level ─────────────────────────────────────────────────────────────────
 func _add_xp(amount: int) -> void:
 	p_xp += amount
-	while p_xp >= p_xp_to_next and p_level < Balance.XP_PER_LEVEL.size():
+	while p_level < Balance.XP_PER_LEVEL.size() and p_xp >= p_xp_to_next:
 		p_xp -= p_xp_to_next
 		p_level += 1
-		var next_idx := mini(p_level - 1, Balance.XP_PER_LEVEL.size() - 1)
-		p_xp_to_next = Balance.XP_PER_LEVEL[next_idx]
+		p_xp_to_next = Balance.XP_PER_LEVEL[mini(p_level - 1, Balance.XP_PER_LEVEL.size()-1)]
 		_trigger_level_up()
 
 
@@ -641,23 +724,4 @@ func _trigger_level_up() -> void:
 	audio_gen.play_levelup()
 	var keys: Array = Balance.PERK_KEYS.duplicate()
 	keys.shuffle()
-	var options := keys.slice(0, 3)
-	if hud:
-		hud.show_perk_choice(options)
-
-
-# ── Game Over ──────────────────────────────────────────────────────────────────
-func _show_game_over() -> void:
-	if not hud:
-		return
-	hud.add_kill_feed("GAME OVER — Wave %d  Kills: %d" % [wave, p_kill_count])
-	# Restart after delay
-	var t = get_tree().create_timer(4.0)
-	t.timeout.connect(func(): get_tree().reload_current_scene())
-
-
-# ── Continuous fire in _process ────────────────────────────────────────────────
-var _fire_active: bool = false
-
-func _on_fire_held_state(state: bool) -> void:
-	_fire_active = state
+	hud.show_perk_choice(keys.slice(0, 3))
