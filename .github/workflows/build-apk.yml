@@ -112,37 +112,25 @@ jobs:
           sed -i "s|keystore/debug=\"res://debug.keystore\"|keystore/debug=\"${{ env.DEBUG_KEYSTORE }}\"|g" export_presets.cfg
           grep "keystore/debug" export_presets.cfg
 
-      # ── First run to generate .godot/ cache ───────────────────────────────
-      - name: Import project
-        run: |
-          mkdir -p build
-          timeout 90 godot --headless --editor --import --quit 2>&1 | tail -20 || true
-          ls -la .godot/ 2>/dev/null || echo "No .godot dir (normal for some setups)"
+      # ── Pre-import assets (generates .godot/ cache) ───────────────────────
+      - name: Import assets
+        run: godot --headless --verbose --editor --quit-after 10 2>&1 | tail -30 || true
 
       # ── Export APK ────────────────────────────────────────────────────────
       - name: Export Android APK (debug)
         run: |
-          mkdir -p build
-          godot \
-            --headless \
-            --export-debug "Android" \
-            "${{ github.workspace }}/build/${{ env.EXPORT_NAME }}.apk" \
+          mkdir -p build/android
+          godot --headless --verbose --export-debug "Android" build/android/super-shooter-hybrid.apk \
             2>&1 | tee export.log
-          echo ""
-          echo "=== Build output ==="
-          find . -name "*.apk" 2>/dev/null | xargs ls -lh 2>/dev/null || echo "No APK found yet"
+          echo "=== APK search ==="
+          find . -name "*.apk" 2>/dev/null | xargs ls -lh 2>/dev/null || echo "No APK found"
 
-      - name: Check APK result
+      - name: Verify APK
         run: |
-          if find . -name "*.apk" | grep -q .; then
-            echo "SUCCESS: APK(s) found:"
-            find . -name "*.apk" -exec ls -lh {} \;
+          if [ -f "build/android/super-shooter-hybrid.apk" ]; then
+            echo "SUCCESS:" && ls -lh build/android/super-shooter-hybrid.apk
           else
-            echo "WARNING: APK not found. Export log:"
-            cat export.log
-            echo ""
-            echo "Trying gradle build directly..."
-            ls android/build/ 2>/dev/null || true
+            echo "APK missing. Full export log:" && cat export.log && exit 1
           fi
 
       # ── Upload artifacts ──────────────────────────────────────────────────
@@ -151,9 +139,7 @@ jobs:
         if: always()
         with:
           name: SuperShooterHybrid-debug-apk
-          path: |
-            build/*.apk
-            android/build/outputs/**/*.apk
+          path: build/android/super-shooter-hybrid.apk
           if-no-files-found: warn
           retention-days: 30
 
