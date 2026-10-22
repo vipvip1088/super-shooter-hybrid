@@ -212,4 +212,87 @@ const FLOAT_SPEED      := 90.0
 const FLOAT_LIFE       := 1.2
 
 # ── Save ──────────────────────────────────────────────────────────────────────
-const SAVE_PATH := "user://save_data.json"
+const SAVE_PATH    := "user://save_data.json"
+const SAVE_3D_PATH := "user://save_3d_data.json"
+
+# ── 3D World ──────────────────────────────────────────────────────────────────
+const ARENA_SIZE       := 80.0
+const ARENA_HALF       := 40.0
+const ARENA_WALL_H     := 6.0
+const COVER_MIN        := 14
+const COVER_MAX        := 22
+const NAV_CELL_SIZE    := 0.6
+
+# ── 3D Player ─────────────────────────────────────────────────────────────────
+const P3D_MAX_HP       := 100.0
+const P3D_SPEED        := 8.0
+const P3D_DASH_DIST    := 6.0
+const P3D_DASH_DUR     := 0.20
+const P3D_DASH_CD      := 2.0
+const P3D_GRAVITY      := 22.0
+const P3D_HEIGHT       := 1.8
+const P3D_RADIUS       := 0.40
+
+# ── 3D Camera ─────────────────────────────────────────────────────────────────
+const CAM_SPRING       := 5.5
+const CAM_PITCH_DEF    := -28.0
+const CAM_PITCH_SNIPE  := -12.0
+const CAM_FOV_DEF      := 72.0
+const CAM_FOV_SNIPE    := 22.0
+const CAM_SMOOTH       := 10.0
+const CAM_SHAKE_DECAY  := 9.0
+
+# ── 3D Zone ───────────────────────────────────────────────────────────────────
+const ZONE3D_START_R   := 38.0
+const ZONE3D_PHASES: Array = [
+	{"duration": 60.0, "damage": 3.0,  "end_ratio": 0.70},
+	{"duration": 45.0, "damage": 6.0,  "end_ratio": 0.45},
+	{"duration": 30.0, "damage": 12.0, "end_ratio": 0.22},
+	{"duration": 20.0, "damage": 25.0, "end_ratio": 0.08},
+]
+
+# ── 3D Weapons (hitscan=true → RayCast; false → projectile) ──────────────────
+const WEAPONS3D: Dictionary = {
+	"ar":       {"damage": 22.0,  "fire_rate": 0.12, "ammo": 30, "reload": 1.8,
+	              "spread": 0.03, "range": 55.0, "hitscan": true,  "pellets": 1,
+	              "aoe": 0.0, "proj_speed": 0.0, "price": 0,    "color": Color(0.8,0.8,0.2)},
+	"shotgun":  {"damage": 18.0,  "fire_rate": 0.70, "ammo": 6,  "reload": 2.2,
+	              "spread": 0.18, "range": 18.0, "hitscan": true,  "pellets": 8,
+	              "aoe": 0.0, "proj_speed": 0.0, "price": 300,  "color": Color(1.0,0.55,0.1)},
+	"sniper":   {"damage": 140.0, "fire_rate": 1.50, "ammo": 5,  "reload": 2.8,
+	              "spread": 0.002,"range":120.0, "hitscan": true,  "pellets": 1,
+	              "aoe": 0.0, "proj_speed": 0.0, "price": 500,  "color": Color(0.3,0.9,1.0)},
+	"plasma":   {"damage": 55.0,  "fire_rate": 0.45, "ammo": 18, "reload": 2.0,
+	              "spread": 0.02, "range": 45.0, "hitscan": false, "pellets": 1,
+	              "aoe": 3.5, "proj_speed": 28.0,"price": 400,  "color": Color(0.3,0.4,1.0)},
+	"grenade":  {"damage": 110.0, "fire_rate": 1.20, "ammo": 4,  "reload": 2.5,
+	              "spread": 0.04, "range": 28.0, "hitscan": false, "pellets": 1,
+	              "aoe": 7.0, "proj_speed": 18.0,"price": 600,  "color": Color(1.0,0.6,0.1)},
+}
+const WEAPON3D_ORDER: Array = ["ar","shotgun","sniper","plasma","grenade"]
+
+# ── 3D Enemies ────────────────────────────────────────────────────────────────
+const ENEMIES3D: Dictionary = {
+	"rusher":   {"hp": 80.0,   "speed": 7.5,  "dmg": 15.0,  "atk_range": 1.8,
+	              "shoot_dmg": 0.0,  "shoot_range": 0.0,  "reward": 50,
+	              "color": Color(1.0,0.3,0.1), "scale": Vector3(0.9,1.0,0.9)},
+	"sniper_e": {"hp": 55.0,   "speed": 3.0,  "dmg":  8.0,  "atk_range": 1.5,
+	              "shoot_dmg": 38.0, "shoot_range": 32.0, "reward": 80,
+	              "color": Color(0.5,0.2,0.9), "scale": Vector3(0.7,1.35,0.7)},
+	"tank":     {"hp": 320.0,  "speed": 2.8,  "dmg": 28.0,  "atk_range": 2.2,
+	              "shoot_dmg": 0.0,  "shoot_range": 0.0,  "reward": 150,
+	              "color": Color(0.35,0.4,0.4),"scale": Vector3(1.5,1.3,1.5)},
+	"kamikaze": {"hp": 45.0,   "speed": 9.0,  "dmg": 90.0,  "atk_range": 1.6,
+	              "shoot_dmg": 0.0,  "shoot_range": 0.0,  "reward": 60,
+	              "color": Color(1.0,0.1,0.05),"scale": Vector3(0.8,0.8,0.8)},
+	"boss":     {"hp":1200.0,  "speed": 4.2,  "dmg": 45.0,  "atk_range": 3.0,
+	              "shoot_dmg": 22.0, "shoot_range": 28.0, "reward": 1000,
+	              "color": Color(1.0,0.8,0.0), "scale": Vector3(2.0,2.0,2.0)},
+}
+const ENEMY3D_ORDER: Array = ["rusher","sniper_e","tank","kamikaze","boss"]
+
+# ── 3D Waves ──────────────────────────────────────────────────────────────────
+const WAVE3D_BASE     := 4
+const WAVE3D_STEP     := 2
+const BOSS3D_WAVE     := 5
+const HP3D_SCALE      := 0.12

@@ -7,9 +7,9 @@ config_version=5
 [application]
 
 config/name="SuperShooterHybrid"
-config/description="PUBG + CS + Rust hybrid mobile shooter"
-config/version="1.0.0"
-run/main_scene="res://scenes/main.tscn"
+config/description="PUBG x CS x Rust 3D mobile shooter"
+config/version="2.0.0"
+run/main_scene="res://scenes/main_3d.tscn"
 config/features=PackedStringArray("4.2", "Mobile")
 config/icon="res://icon.svg"
 
@@ -17,7 +17,7 @@ config/icon="res://icon.svg"
 
 window/size/viewport_width=1080
 window/size/viewport_height=1920
-window/stretch/mode="canvas_items"
+window/stretch/mode="disabled"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
 
@@ -29,6 +29,13 @@ common/physics_ticks_per_second=60
 
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.05,0.05,0.08,1)
+lights_and_shadows/directional_shadow/size=1024
+anti_aliasing/quality/msaa_3d=1
+
+[navigation]
+
+baking/thread_model/baking_use_multiple_threads=false
 
 [input]
 

@@ -371,6 +371,100 @@ class TestHeroBalance(unittest.TestCase):
                 f"Need at least 10 weapons, found {len(defined)}")
 
 
+class Test3DFilesExist(unittest.TestCase):
+    """Verify all 3D module files referenced in bootstrap.gd exist on disk."""
+
+    REQUIRED_3D = [
+        os.path.join("scripts", "world", "world_generator_3d.gd"),
+        os.path.join("scripts", "player", "player_controller_3d.gd"),
+        os.path.join("scripts", "player", "weapon_system_3d.gd"),
+        os.path.join("scripts", "enemies", "enemy_ai_3d.gd"),
+        os.path.join("scripts", "fx", "fx_manager_3d.gd"),
+        os.path.join("scripts", "audio", "audio_generator_3d.gd"),
+        os.path.join("scripts", "ui", "hud_3d.gd"),
+        os.path.join("scripts", "game_manager_3d.gd"),
+        os.path.join("scenes", "main_3d.tscn"),
+    ]
+
+    def test_3d_files_exist(self):
+        for rel in self.REQUIRED_3D:
+            path = os.path.join(PROJECT_ROOT, rel)
+            self.assertTrue(os.path.exists(path), f"Missing 3D file: {rel}")
+
+
+class Test3DModuleNoTypedClassRefs(unittest.TestCase):
+    """game_manager_3d.gd must not have typed class-level var declarations."""
+
+    def test_game_manager_3d_no_typed_refs(self):
+        path = os.path.join(PROJECT_ROOT, "scripts", "game_manager_3d.gd")
+        if not os.path.exists(path):
+            self.skipTest("game_manager_3d.gd not found")
+        content = read_file(path)
+        # Only flag USER-DEFINED script classes (not built-in Godot types).
+        # Built-ins: Node3D, MeshInstance3D, StandardMaterial3D, etc. are safe.
+        USER_CLASSES = (
+            "PlayerController3D|WeaponSystem3D|EnemyAI3D|FXManager3D|"
+            "AudioGenerator3D|HUD3D|WorldGenerator3D|SaveManager|RoundManager"
+        )
+        typed = re.findall(
+            rf'^var\s+\w+\s*:\s*({USER_CLASSES})\b',
+            content, re.MULTILINE
+        )
+        self.assertEqual(len(typed), 0,
+            f"game_manager_3d.gd has typed user-class refs that cause cascades: {typed}")
+
+    def test_bootstrap_extends_node3d(self):
+        path = os.path.join(PROJECT_ROOT, "bootstrap.gd")
+        if not os.path.exists(path):
+            self.skipTest("bootstrap.gd not found")
+        content = read_file(path)
+        self.assertRegex(content, r'extends\s+Node3D',
+            "bootstrap.gd should extend Node3D for 3D scene root")
+
+
+class Test3DBalance(unittest.TestCase):
+    """Verify 3D balance constants exist in balance.gd."""
+
+    REQUIRED_3D = [
+        "ARENA_SIZE", "ARENA_HALF", "ARENA_WALL_H",
+        "P3D_MAX_HP", "P3D_SPEED", "P3D_DASH_DIST", "P3D_DASH_DUR",
+        "CAM_SPRING", "CAM_PITCH_DEF", "CAM_FOV_DEF",
+        "ZONE3D_START_R", "ZONE3D_PHASES",
+        "WEAPONS3D", "WEAPON3D_ORDER",
+        "ENEMIES3D", "ENEMY3D_ORDER",
+        "WAVE3D_BASE", "WAVE3D_STEP", "HP3D_SCALE",
+    ]
+
+    def _balance_content(self):
+        for path in collect_gd_files():
+            if path.endswith("balance.gd"):
+                return read_file(path)
+        return ""
+
+    def test_3d_constants_in_balance(self):
+        content = self._balance_content()
+        self.assertNotEqual(content, "", "balance.gd not found")
+        for name in self.REQUIRED_3D:
+            self.assertIn(name, content,
+                f"3D constant '{name}' missing from balance.gd")
+
+    def test_5_weapons_3d(self):
+        content = self._balance_content()
+        m = re.search(r'WEAPONS3D.*?=.*?\{(.+?)\n\}', content, re.DOTALL)
+        if m:
+            defined = re.findall(r'"(\w+)"\s*:\s*\{', m.group(1))
+            self.assertGreaterEqual(len(defined), 5,
+                f"Need ≥5 weapons in WEAPONS3D, found {len(defined)}")
+
+    def test_5_enemies_3d(self):
+        content = self._balance_content()
+        m = re.search(r'ENEMIES3D.*?=.*?\{(.+?)\n\}', content, re.DOTALL)
+        if m:
+            defined = re.findall(r'"(\w+)"\s*:\s*\{', m.group(1))
+            self.assertGreaterEqual(len(defined), 5,
+                f"Need ≥5 enemy types in ENEMIES3D, found {len(defined)}")
+
+
 if __name__ == "__main__":
     loader  = unittest.TestLoader()
     suite   = loader.loadTestsFromModule(sys.modules[__name__])

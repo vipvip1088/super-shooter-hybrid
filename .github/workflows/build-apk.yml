@@ -22,6 +22,8 @@ jobs:
         run: python tests/test_game_logic.py
       - name: Run GDScript integrity tests
         run: python tests/test_gdscript_integrity.py
+      - name: Run 3D game logic tests
+        run: python tests/test_3d_logic.py
 
   # ── Job 2: Build Android APK ──────────────────────────────────────────────
   build-apk:
