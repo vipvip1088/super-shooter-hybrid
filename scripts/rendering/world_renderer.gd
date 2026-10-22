@@ -12,6 +12,7 @@ func _draw() -> void:
 	_draw_map()
 	_draw_zone()
 	_draw_barricades()
+	_draw_turrets()
 	_draw_loot()
 	_draw_enemies()
 	_draw_projectiles()
@@ -46,6 +47,17 @@ func _draw_zone() -> void:
 		var pulse := fmod(Time.get_ticks_msec() * 0.003, TAU)
 		draw_arc(pp, 30.0, 0.0, TAU, 32,
 			Color(1.0, 0.15, 0.15, sin(pulse) * 0.4 + 0.6), 5.0)
+
+# ── Turrets ────────────────────────────────────────────────────────────────
+func _draw_turrets() -> void:
+	var turrets = _gm.get("turrets")
+	if turrets == null:
+		return
+	for t in turrets:
+		var p: Vector2 = t["pos"]
+		draw_circle(p, 18.0, Color(0.8, 0.7, 0.2, 0.9))
+		draw_arc(p, 18.0, 0.0, TAU, 16, Color(1.0, 0.9, 0.3), 3.0)
+		draw_rect(Rect2(p.x - 4.0, p.y - 20.0, 8.0, 16.0), Color(0.6, 0.6, 0.6))
 
 # ── Barricades ─────────────────────────────────────────────────────────────
 func _draw_barricades() -> void:
@@ -88,6 +100,9 @@ func _draw_loot() -> void:
 					Color(0.6,0.6,0.8), Color(0.6,0.6,0.8),
 					Color(0.6,0.6,0.8), Color(0.6,0.6,0.8)
 				]))
+			"chips":
+				draw_rect(Rect2(p.x - 8.0, p.y - 8.0, 16.0, 16.0), Color(0.2, 0.8, 1.0))
+				draw_rect(Rect2(p.x - 4.0, p.y - 4.0, 8.0, 8.0), Color(0.0, 0.4, 0.8))
 
 # ── Enemies ────────────────────────────────────────────────────────────────
 func _draw_enemies() -> void:
@@ -156,6 +171,14 @@ func _draw_enemies() -> void:
 					var a := rot + (TAU / 8.0) * k
 					draw_circle(p + Vector2(cos(a), sin(a)) * (r + 16.0), 5.0, ring_c)
 				draw_arc(p, r + 24.0, 0.0, TAU, 32, ring_c.darkened(0.3), 2.5)
+
+			"elite":
+				draw_circle(p, r, draw_c)
+				draw_arc(p, r, 0.0, TAU, 32, draw_c.lightened(0.3), 3.0)
+				var rot2 := Time.get_ticks_msec() * 0.002
+				for k in range(6):
+					var a2 := rot2 + (TAU / 6.0) * k
+					draw_circle(p + Vector2(cos(a2), sin(a2)) * (r + 10.0), 3.5, draw_c.lightened(0.4))
 
 		# HP bar
 		var bw := r * 3.5

@@ -25,6 +25,7 @@ const STATS: Dictionary = {
 	"tank":    {"max_hp": 250.0,  "speed": 80.0,  "contact_dmg": 30.0, "shoot_dmg": 0.0,  "shoot_range": 0.0,   "agro": 400.0,  "radius": 30.0, "reward": 350,  "xp": 25},
 	"bomber":  {"max_hp": 50.0,   "speed": 280.0, "contact_dmg": 60.0, "shoot_dmg": 0.0,  "shoot_range": 0.0,   "agro": 500.0,  "radius": 20.0, "reward": 200,  "xp": 20},
 	"boss":    {"max_hp": 1000.0, "speed": 120.0, "contact_dmg": 25.0, "shoot_dmg": 20.0, "shoot_range": 600.0, "agro": 2000.0, "radius": 50.0, "reward": 2000, "xp": 200},
+	"elite":   {"max_hp": 200.0,  "speed": 220.0, "contact_dmg": 20.0, "shoot_dmg": 18.0, "shoot_range": 350.0, "agro": 700.0,  "radius": 22.0, "reward": 500,  "xp": 50},
 }
 
 # ─── Setup ────────────────────────────────────────────────────────────────────
@@ -54,16 +55,18 @@ func start_wave(round_num: int, zone_center: Vector2, zone_radius: float) -> voi
 
 	# Fill queue with weighted random types
 	for i in range(count):
-		var r: int = randi_range(0, 9)
+		var r: int = randi_range(0, 11)
 		var t: String
-		if r < 5:
+		if r < 4:
 			t = "rusher"
-		elif r < 8:
+		elif r < 7:
 			t = "shooter"
 		elif r < 9:
 			t = "tank"
-		else:
+		elif r < 11:
 			t = "bomber"
+		else:
+			t = "elite" if round_num >= 3 else "rusher"
 		_spawn_queue.append(t)
 
 	# Add extra tanks for later rounds
@@ -153,6 +156,8 @@ func update(delta: float, player_pos: Vector2, zone_center: Vector2, zone_radius
 				_ai_bomber(e, delta, player_pos, enemy_list, proj_list)
 			"boss":
 				_ai_boss(e, delta, player_pos, enemy_list, proj_list)
+			"elite":
+				_ai_shooter(e, delta, player_pos, enemy_list, proj_list)
 
 		# Death check
 		if e["hp"] <= 0.0 and e["state"] != "dead":

@@ -55,6 +55,14 @@ func spawn_loot(pos: Vector2, loot_mult: float) -> void:
 			"timer": Balance.LOOT_DESPAWN_TIME
 		})
 
+	if randf() < Balance.LOOT_CHIP_CHANCE:
+		items.append({
+			"pos":  Vector2(pos),
+			"type": "chips",
+			"value": 1,
+			"timer": Balance.LOOT_DESPAWN_TIME
+		})
+
 
 func update(delta: float, player_pos: Vector2) -> void:
 	var items: Array = _gm.loot_items
@@ -63,9 +71,12 @@ func update(delta: float, player_pos: Vector2) -> void:
 		item["timer"] -= delta
 
 		var d: float = player_pos.distance_to(item["pos"])
-		if d < Balance.LOOT_MAGNET_RADIUS:
+		var mm_raw = _gm.get("p_magnet_mult")
+		var mm: float = float(mm_raw) if mm_raw != null else 1.0
+		var magnet_r: float = Balance.LOOT_MAGNET_RADIUS * mm
+		if d < magnet_r:
 			var dir := (player_pos - item["pos"]).normalized()
-			var pull_speed := lerpf(200.0, 600.0, 1.0 - d / Balance.LOOT_MAGNET_RADIUS)
+			var pull_speed := lerpf(200.0, 600.0, 1.0 - d / maxf(magnet_r, 1.0))
 			item["pos"] += dir * pull_speed * delta
 
 		if d < 24.0:
@@ -92,4 +103,6 @@ func _collect(item: Dictionary) -> void:
 			_gm.p_wood  += v
 		"metal":
 			_gm.p_metal += v
+		"chips":
+			_gm.p_chips += v
 	emit_signal("loot_collected", t, v)

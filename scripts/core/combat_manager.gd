@@ -6,85 +6,21 @@ signal hit_player(damage: float)
 signal projectile_explosion(pos: Vector2, radius: float, damage: float)
 signal weapon_empty(weapon_id: String)
 signal reload_complete(weapon_id: String, new_ammo: int)
-signal kill_confirmed(enemy_index: int)
 
-const _weapons: Dictionary = {
-	"pistol": {
-		"damage": 25.0,
-		"fire_rate": 0.40,
-		"ammo": 12,
-		"reload_time": 1.2,
-		"spread": 0.05,
-		"speed": 900.0,
-		"range": 700.0,
-		"pellets": 1,
-		"aoe": 0.0,
-		"price": 0
-	},
-	"shotgun": {
-		"damage": 18.0,
-		"fire_rate": 0.80,
-		"ammo": 6,
-		"reload_time": 1.5,
-		"spread": 0.18,
-		"speed": 750.0,
-		"range": 350.0,
-		"pellets": 7,
-		"aoe": 0.0,
-		"price": 600
-	},
-	"smg": {
-		"damage": 12.0,
-		"fire_rate": 0.10,
-		"ammo": 30,
-		"reload_time": 1.8,
-		"spread": 0.08,
-		"speed": 850.0,
-		"range": 550.0,
-		"pellets": 1,
-		"aoe": 0.0,
-		"price": 500
-	},
-	"sniper": {
-		"damage": 85.0,
-		"fire_rate": 1.50,
-		"ammo": 5,
-		"reload_time": 2.5,
-		"spread": 0.00,
-		"speed": 1800.0,
-		"range": 1200.0,
-		"pellets": 1,
-		"aoe": 0.0,
-		"price": 1400
-	},
-	"plasma": {
-		"damage": 40.0,
-		"fire_rate": 0.60,
-		"ammo": 8,
-		"reload_time": 2.0,
-		"spread": 0.02,
-		"speed": 600.0,
-		"range": 500.0,
-		"pellets": 1,
-		"aoe": 80.0,
-		"price": 900
-	}
-}
-
-var _gm: Node
+var _gm:           Node
 var _fire_cooldown: float = 0.0
-var _reload_mult: float = 1.0
+var _reload_mult:   float = 1.0
 
 
 func setup(game_manager: Node) -> void:
-	_gm = game_manager
+	_gm          = game_manager
 	_fire_cooldown = 0.0
-	_reload_mult = 1.0
+	_reload_mult   = 1.0
 
 
 func get_weapon(weapon_id: String) -> Dictionary:
-	if weapon_id in _weapons:
-		return _weapons[weapon_id].duplicate()
+	if weapon_id in Balance.WEAPONS:
+		return Balance.WEAPONS[weapon_id].duplicate()
 	return {}
 
 
@@ -96,77 +32,42 @@ func try_shoot(origin: Vector2, direction: Vector2, proj_list: Array) -> bool:
 	if _gm.p_ammo <= 0:
 		return false
 
-	var weapon_data: Dictionary = get_weapon(_gm.p_weapon)
-	if weapon_data.is_empty():
+	var wd: Dictionary = get_weapon(_gm.p_weapon)
+	if wd.is_empty():
 		return false
 
-	var spread: float = weapon_data["spread"]
-	var speed: float = weapon_data["speed"]
-	var damage: float = weapon_data["damage"]
-	var aoe: float = weapon_data["aoe"]
-	var pellets: int = weapon_data["pellets"]
+	var spread:    float  = float(wd["spread"])
+	var speed:     float  = float(wd["speed"])
+	var damage:    float  = float(wd["damage"])
+	var aoe:       float  = float(wd["aoe"])
+	var pellets:   int    = int(wd["pellets"])
 	var weapon_id: String = _gm.p_weapon
 
-	var proj_color: Color
-	match weapon_id:
-		"pistol":
-			proj_color = Color(1.0, 1.0, 0.3, 1.0)
-		"shotgun":
-			proj_color = Color(1.0, 0.6, 0.1, 1.0)
-		"smg":
-			proj_color = Color(0.4, 1.0, 0.4, 1.0)
-		"sniper":
-			proj_color = Color(0.3, 0.8, 1.0, 1.0)
-		"plasma":
-			proj_color = Color(0.8, 0.2, 1.0, 1.0)
-		_:
-			proj_color = Color(1.0, 1.0, 1.0, 1.0)
+	var proj_color := _weapon_color(weapon_id)
+	var proj_radius := _weapon_radius(weapon_id)
+	var base_angle  := direction.angle()
+	var ttl_base    := (float(wd["range"]) / speed) + 0.15
 
-	var proj_radius: float = 4.0
-	if weapon_id == "shotgun":
-		proj_radius = 8.0
-	elif weapon_id == "plasma":
-		proj_radius = 14.0
-
-	var base_angle: float = direction.angle()
-	var ttl_base: float = (weapon_data["range"] / speed) + 0.1
-
-	if pellets == 7:
-		for _p in range(7):
-			var angle: float = base_angle + randf_range(-spread, spread)
-			var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
-			proj_list.append({
-				"pos": Vector2(origin.x, origin.y),
-				"vel": vel,
-				"damage": damage,
-				"owner": "player",
-				"weapon": weapon_id,
-				"ttl": ttl_base,
-				"radius": proj_radius,
-				"aoe": aoe,
-				"color": proj_color,
-				"trail": [],
-				"dist": 0.0
-			})
-	else:
-		var angle: float = base_angle + randf_range(-spread, spread)
-		var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
+	var shots := pellets if pellets > 1 else 1
+	for _i in range(shots):
+		var angle := base_angle + randf_range(-spread, spread)
+		var vel   := Vector2(cos(angle), sin(angle)) * speed
 		proj_list.append({
-			"pos": Vector2(origin.x, origin.y),
-			"vel": vel,
+			"pos":    Vector2(origin),
+			"vel":    vel,
 			"damage": damage,
-			"owner": "player",
+			"owner":  "player",
 			"weapon": weapon_id,
-			"ttl": ttl_base,
+			"ttl":    ttl_base,
 			"radius": proj_radius,
-			"aoe": aoe,
-			"color": proj_color,
-			"trail": [],
-			"dist": 0.0
+			"aoe":    aoe,
+			"color":  proj_color,
+			"trail":  [],
+			"dist":   0.0,
 		})
 
-	_gm.p_ammo -= 1
-	_fire_cooldown = weapon_data["fire_rate"]
+	_gm.p_ammo       -= 1
+	_fire_cooldown    = float(wd["fire_rate"])
 
 	if _gm.p_ammo <= 0:
 		emit_signal("weapon_empty", weapon_id)
@@ -174,18 +75,39 @@ func try_shoot(origin: Vector2, direction: Vector2, proj_list: Array) -> bool:
 	return true
 
 
+func _weapon_color(weapon_id: String) -> Color:
+	if weapon_id in Balance.WEAPONS:
+		var wd: Dictionary = Balance.WEAPONS[weapon_id]
+		return Color(float(wd["color_r"]), float(wd["color_g"]), float(wd["color_b"]), 1.0)
+	return Color(1.0, 1.0, 1.0, 1.0)
+
+
+func _weapon_radius(weapon_id: String) -> float:
+	match weapon_id:
+		"shotgun":      return 7.0
+		"plasma":       return 14.0
+		"rocket":       return 12.0
+		"minigun":      return 4.0
+		"flamethrower": return 8.0
+		_:              return 5.0
+
+
 func start_reload() -> void:
 	if _gm.p_is_reloading:
 		return
 	if _gm.p_ammo == _gm.p_max_ammo:
 		return
-
-	var weapon_data: Dictionary = get_weapon(_gm.p_weapon)
-	if weapon_data.is_empty():
+	var wd: Dictionary = get_weapon(_gm.p_weapon)
+	if wd.is_empty():
 		return
-
 	_gm.p_is_reloading = true
-	_gm.p_reload_timer = weapon_data["reload_time"] / _reload_mult
+	_gm.p_reload_timer = float(wd["reload_time"]) / _reload_mult
+
+
+func create_explosion(center: Vector2, radius: float, damage: float,
+		enemy_list: Array, _proj_list: Array) -> void:
+	emit_signal("projectile_explosion", center, radius, damage)
+	_apply_aoe_damage(center, radius, damage, enemy_list)
 
 
 func update(delta: float, player_pos: Vector2, enemy_list: Array, proj_list: Array) -> void:
@@ -195,7 +117,7 @@ func update(delta: float, player_pos: Vector2, enemy_list: Array, proj_list: Arr
 		_gm.p_reload_timer -= delta
 		if _gm.p_reload_timer <= 0.0:
 			_gm.p_is_reloading = false
-			_gm.p_ammo = _gm.p_max_ammo
+			_gm.p_ammo         = _gm.p_max_ammo
 			emit_signal("reload_complete", _gm.p_weapon, _gm.p_ammo)
 
 	for i in range(proj_list.size() - 1, -1, -1):
@@ -203,79 +125,82 @@ func update(delta: float, player_pos: Vector2, enemy_list: Array, proj_list: Arr
 		var move: Vector2 = p["vel"] * delta
 		p["pos"] += move
 		p["dist"] += move.length()
-		p["ttl"] -= delta
+		p["ttl"]  -= delta
 
-		p["trail"].append(Vector2(p["pos"].x, p["pos"].y))
-		if p["trail"].size() > 5:
-			p["trail"].pop_front()
+		p["trail"].append(Vector2(p["pos"]))
+		if (p["trail"] as Array).size() > 6:
+			(p["trail"] as Array).pop_front()
 
 		var weapon_range: float = 400.0
-		if p["weapon"] in _weapons:
-			weapon_range = get_weapon(p["weapon"])["range"]
+		var pw: String = p["weapon"]
+		if pw in Balance.WEAPONS:
+			weapon_range = float(Balance.WEAPONS[pw]["range"])
 
-		if p["ttl"] <= 0.0 or p["dist"] > weapon_range:
-			if p["weapon"] == "plasma" and p["aoe"] > 0.0:
+		if float(p["ttl"]) <= 0.0 or float(p["dist"]) > weapon_range:
+			if float(p["aoe"]) > 0.0 and pw != "enemy_bullet":
 				emit_signal("projectile_explosion", p["pos"], p["aoe"], p["damage"])
-				_apply_aoe_damage(p["pos"], p["aoe"], p["damage"], enemy_list, proj_list)
+				_apply_aoe_damage(p["pos"], float(p["aoe"]), float(p["damage"]), enemy_list)
 			if i < proj_list.size():
 				proj_list.remove_at(i)
 			continue
 
 		if p["owner"] == "player":
-			_check_player_proj_vs_enemies(i, p, enemy_list, proj_list)
+			_check_player_proj(i, p, enemy_list, proj_list)
 		elif p["owner"] == "enemy":
 			if _gm.p_invincible <= 0.0:
-				var dist_to_player: float = p["pos"].distance_to(player_pos)
-				if dist_to_player < p["radius"] + 22.0:
-					emit_signal("hit_player", p["damage"])
+				var dist_to_player: float = (p["pos"] as Vector2).distance_to(player_pos)
+				if dist_to_player < float(p["radius"]) + 22.0:
+					emit_signal("hit_player", float(p["damage"]))
 					if i < proj_list.size():
 						proj_list.remove_at(i)
 
 
-func _check_player_proj_vs_enemies(proj_idx: int, proj: Dictionary, enemy_list: Array, proj_list: Array) -> void:
+func _check_player_proj(proj_idx: int, proj: Dictionary,
+		enemy_list: Array, proj_list: Array) -> void:
 	for j in range(enemy_list.size() - 1, -1, -1):
 		var e = enemy_list[j]
-		if e["hp"] <= 0.0:
+		if float(e["hp"]) <= 0.0:
 			continue
-		var dist: float = proj["pos"].distance_to(e["pos"])
-		if dist < proj["radius"] + e["radius"]:
-			if proj["aoe"] > 0.0:
+		var dist: float = (proj["pos"] as Vector2).distance_to(e["pos"])
+		if dist < float(proj["radius"]) + float(e["radius"]):
+			if float(proj["aoe"]) > 0.0:
 				emit_signal("projectile_explosion", proj["pos"], proj["aoe"], proj["damage"])
-				_apply_aoe_damage(proj["pos"], proj["aoe"], proj["damage"], enemy_list, proj_list)
+				_apply_aoe_damage(proj["pos"], float(proj["aoe"]), float(proj["damage"]), enemy_list)
 				if proj_idx < proj_list.size():
 					proj_list.remove_at(proj_idx)
 			else:
-				emit_signal("hit_enemy", j, proj["damage"], false)
-				if proj_list.size() > proj_idx:
+				emit_signal("hit_enemy", j, float(proj["damage"]), false)
+				if proj_idx < proj_list.size():
 					proj_list.remove_at(proj_idx)
 			return
 
 
-func _apply_aoe_damage(center: Vector2, radius: float, damage: float, enemy_list: Array, proj_list: Array) -> void:
+func _apply_aoe_damage(center: Vector2, radius: float, damage: float, enemy_list: Array) -> void:
 	for j in range(enemy_list.size() - 1, -1, -1):
 		var e = enemy_list[j]
-		if e["hp"] <= 0.0:
+		if float(e["hp"]) <= 0.0:
 			continue
 		var dist: float = center.distance_to(e["pos"])
-		if dist < radius + e["radius"]:
-			emit_signal("hit_enemy", j, damage, true)
+		if dist < radius + float(e["radius"]):
+			var falloff := 1.0 - clampf(dist / radius, 0.0, 1.0) * 0.5
+			emit_signal("hit_enemy", j, damage * falloff, true)
 
 	if _gm.p_invincible <= 0.0:
 		var dist_to_player: float = center.distance_to(_gm.p_pos)
 		if dist_to_player < radius + 22.0:
-			emit_signal("hit_player", damage)
+			emit_signal("hit_player", damage * 0.5)
 
 
 func auto_aim(player_pos: Vector2, enemy_list: Array, max_range: float) -> Vector2:
-	var best_dist: float = max_range + 1.0
-	var result: Vector2 = Vector2.ZERO
+	var best_dist := max_range + 1.0
+	var result    := Vector2.ZERO
 	for e in enemy_list:
-		if e["hp"] <= 0.0:
+		if float(e["hp"]) <= 0.0:
 			continue
 		var d: float = player_pos.distance_to(e["pos"])
 		if d < best_dist:
 			best_dist = d
-			result = (e["pos"] - player_pos).normalized()
+			result    = ((e["pos"] as Vector2) - player_pos).normalized()
 	return result
 
 

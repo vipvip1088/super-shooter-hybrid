@@ -63,28 +63,34 @@ func apply_perk(perk_key: String) -> void:
 		_advance_round()
 		return
 	var effect: String = perk["effect"]
-	var value: float   = perk["value"]
+	var value:  float  = float(perk["value"])
 	match effect:
 		"max_hp":
 			_gm.p_max_hp += value
 			_gm.p_hp = minf(_gm.p_hp + value, _gm.p_max_hp)
 		"loot_mult":
-			_gm.p_loot_mult  = value
+			_gm.p_loot_mult   = maxf(float(_gm.p_loot_mult),  value)
 		"reload_mult":
-			_gm.p_reload_mult = value
+			_gm.p_reload_mult = maxf(float(_gm.p_reload_mult), value)
+			_gm.combat_manager.set_reload_multiplier(_gm.p_reload_mult)
 		"zone_resist":
-			_gm.p_zone_resist = value
+			_gm.p_zone_resist = maxf(float(_gm.p_zone_resist), value)
 		"kill_bonus":
-			_gm.p_kill_bonus  = value
+			_gm.p_kill_bonus  += value
 		"ammo_mult":
 			var wd: Dictionary = _gm.combat_manager.get_weapon(_gm.p_weapon)
 			if not wd.is_empty():
-				_gm.p_max_ammo = int(wd["ammo"] * value)
-				_gm.p_ammo = _gm.p_max_ammo
-		"hit_stop":
-			_gm.p_hit_stop_dur = value
-		"last_stand":
-			_gm.p_last_stand   = value
+				_gm.p_max_ammo = int(int(wd["ammo"]) * value)
+				_gm.p_ammo     = _gm.p_max_ammo
+		"hit_stop":    _gm.p_hit_stop_dur = value
+		"last_stand":  _gm.p_last_stand   = value
+		"vampire":     _gm.p_vampire      += value
+		"double_shot": _gm.p_double_shot  = true
+		"shield":      _gm.p_shield       += value
+		"explosive":   _gm.p_explosive_rds = true
+		"speed_mult":  _gm.p_speed_mult   *= value
+		"berserker":   _gm.p_dmg_mult     = maxf(float(_gm.p_dmg_mult), value)
+		"magnet":      _gm.p_magnet_mult  = maxf(float(_gm.p_magnet_mult), value)
 	_gm.p_perks.append(perk_key)
 	_advance_round()
 
