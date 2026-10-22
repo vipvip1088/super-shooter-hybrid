@@ -10,8 +10,6 @@ on:
 env:
   GODOT_VERSION: "4.2.2"
   GODOT_RELEASE: "stable"
-  EXPORT_NAME: "SuperShooterHybrid"
-  ANDROID_NDK_VERSION: "23.2.8568313"
 
 jobs:
   # ── Job 1: Python unit tests ─────────────────────────────────────────────
@@ -20,10 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Run unit tests
-        run: |
-          python -m pytest tests/test_game_logic.py -v 2>/dev/null || python tests/test_game_logic.py
+        run: python tests/test_game_logic.py
 
   # ── Job 2: Build Android APK ──────────────────────────────────────────────
   build-apk:
@@ -34,107 +30,97 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Java 17 ────────────────────────────────────────────────────────────
+      # ── Java 17 (нужна для подписи APK) ───────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # ── Android NDK (SDK is pre-installed on ubuntu-latest) ───────────────
-      - name: Install Android NDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          # Install only NDK — build-tools and platforms are already present
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "ndk;${{ env.ANDROID_NDK_VERSION }}" \
-            "build-tools;34.0.0" \
-            "platforms;android-34" 2>&1 | tail -5
-          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_ENV
-
       # ── Debug keystore ────────────────────────────────────────────────────
       - name: Generate debug keystore
         run: |
           keytool -genkeypair \
-            -v \
-            -keystore "${{ github.workspace }}/debug.keystore" \
+            -keystore "$GITHUB_WORKSPACE/debug.keystore" \
             -alias androiddebugkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass android \
-            -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US" \
-            -J-Dfile.encoding=UTF-8
-          echo "DEBUG_KEYSTORE=${{ github.workspace }}/debug.keystore" >> $GITHUB_ENV
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US"
+          echo "DEBUG_KEYSTORE=$GITHUB_WORKSPACE/debug.keystore" >> $GITHUB_ENV
 
       # ── Godot engine binary ───────────────────────────────────────────────
       - name: Download Godot ${{ env.GODOT_VERSION }}
         run: |
-          set -e
           URL="https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}/Godot_v${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}_linux.x86_64.zip"
           curl -fsSL "$URL" -o godot.zip
           unzip -q godot.zip
-          chmod +x "Godot_v${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}_linux.x86_64"
           sudo mv "Godot_v${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}_linux.x86_64" /usr/local/bin/godot
           godot --version
 
-      # ── Export templates ──────────────────────────────────────────────────
+      # ── Export templates (содержат android_debug.apk / android_release.apk) ─
       - name: Download export templates
         run: |
-          set -e
           TMPL_URL="https://github.com/godotengine/godot/releases/download/${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}/Godot_v${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}_export_templates.tpz"
           curl -fsSL "$TMPL_URL" -o templates.tpz
-          TEMPLATES_DIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.${{ env.GODOT_RELEASE }}"
-          mkdir -p "$TEMPLATES_DIR"
-          unzip -q templates.tpz -d /tmp/godot_tpl
-          mv /tmp/godot_tpl/templates/* "$TEMPLATES_DIR/"
-          ls "$TEMPLATES_DIR/" | grep android || echo "Templates dir contents:"
+          TDIR="$HOME/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.${{ env.GODOT_RELEASE }}"
+          mkdir -p "$TDIR"
+          unzip -q templates.tpz -d /tmp/tpl
+          mv /tmp/tpl/templates/* "$TDIR/"
+          echo "Android templates:"
+          ls "$TDIR/" | grep -i android
 
-      # ── Godot editor settings (Android SDK paths) ─────────────────────────
-      - name: Configure Godot Android paths
+      # ── Godot editor settings (Android SDK + keystore) ────────────────────
+      - name: Configure Godot editor settings
         run: |
           mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" << SETTINGS
+          cat > "$HOME/.config/godot/editor_settings-4.tres" << 'EOF'
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
-          export/android/android_sdk_path = "$ANDROID_HOME"
-          export/android/debug_keystore = "${{ env.DEBUG_KEYSTORE }}"
+          export/android/android_sdk_path = "/usr/local/lib/android/sdk"
+          export/android/debug_keystore = ""
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
-          SETTINGS
+          EOF
+          # patch keystore path (heredoc не раскрывает $GITHUB_ENV переменные)
+          sed -i "s|export/android/debug_keystore = \"\"|export/android/debug_keystore = \"$DEBUG_KEYSTORE\"|" \
+            "$HOME/.config/godot/editor_settings-4.tres"
           cat "$HOME/.config/godot/editor_settings-4.tres"
 
-      # ── Update export_presets.cfg keystore path ────────────────────────────
+      # ── patch export_presets.cfg: абсолютный путь к keystore ─────────────
       - name: Patch export_presets.cfg
         run: |
-          sed -i "s|keystore/debug=\"res://debug.keystore\"|keystore/debug=\"${{ env.DEBUG_KEYSTORE }}\"|g" export_presets.cfg
-          grep "keystore/debug" export_presets.cfg
+          sed -i "s|keystore/debug=\"res://debug.keystore\"|keystore/debug=\"$DEBUG_KEYSTORE\"|" export_presets.cfg
+          grep "keystore/debug=" export_presets.cfg
 
-      # ── Pre-import assets (generates .godot/ cache) ───────────────────────
+      # ── Pre-import: Godot генерирует .godot/ кэш ─────────────────────────
       - name: Import assets
-        run: godot --headless --verbose --editor --quit-after 10 2>&1 | tail -30 || true
+        run: |
+          godot --headless --verbose --editor --quit-after 10 2>&1 | tail -20 || true
+          ls -la .godot/ 2>/dev/null && echo "Cache OK" || echo "No cache dir"
 
-      # ── Export APK ────────────────────────────────────────────────────────
-      - name: Export Android APK (debug)
+      # ── Export APK (use_gradle_build=false → использует шаблон из .tpz) ──
+      - name: Export Android APK
         run: |
           mkdir -p build/android
-          godot --headless --verbose --export-debug "Android" build/android/super-shooter-hybrid.apk \
+          godot --headless --verbose \
+            --export-debug "Android" \
+            build/android/super-shooter-hybrid.apk \
             2>&1 | tee export.log
-          echo "=== APK search ==="
-          find . -name "*.apk" 2>/dev/null | xargs ls -lh 2>/dev/null || echo "No APK found"
+          echo "--- APK search ---"
+          find . -name "*.apk" 2>/dev/null | xargs ls -lh 2>/dev/null || echo "No APK"
 
       - name: Verify APK
         run: |
-          if [ -f "build/android/super-shooter-hybrid.apk" ]; then
-            echo "SUCCESS:" && ls -lh build/android/super-shooter-hybrid.apk
+          APK="build/android/super-shooter-hybrid.apk"
+          if [ -f "$APK" ]; then
+            echo "SUCCESS: $(ls -lh $APK)"
           else
-            echo "APK missing. Full export log:" && cat export.log && exit 1
+            echo "FAILED. Export log:" && cat export.log && exit 1
           fi
 
-      # ── Upload artifacts ──────────────────────────────────────────────────
-      - name: Upload APK
+      # ── Upload APK ────────────────────────────────────────────────────────
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -161,7 +147,6 @@ jobs:
         with:
           name: SuperShooterHybrid-debug-apk
           path: release/
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
