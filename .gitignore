@@ -1,0 +1,28 @@
+# Godot 4 specific
+.godot/
+*.translation
+export.log
+
+# Android build artifacts
+android/build/
+android/.gradle/
+build/*.apk
+build/*.aab
+
+# Keystore (never commit real keystores!)
+*.keystore
+!debug.keystore
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

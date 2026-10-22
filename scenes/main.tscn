@@ -1,0 +1,45 @@
+[gd_scene load_steps=4 format=3 uid="uid://main_scene"]
+
+[ext_resource type="Script" path="res://scripts/zone_manager.gd" id="1_zone"]
+[ext_resource type="Script" path="res://scripts/shop_system.gd" id="2_shop"]
+[ext_resource type="Script" path="res://scripts/crafting.gd" id="3_craft"]
+
+[node name="Main" type="Node2D"]
+
+[node name="ZoneManager" type="Node" parent="."]
+script = ExtResource("1_zone")
+
+[node name="ShopSystem" type="Node" parent="."]
+script = ExtResource("2_shop")
+
+[node name="CraftingSystem" type="Node" parent="."]
+script = ExtResource("3_craft")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="HealthLabel" type="Label" parent="HUD"]
+anchor_left = 0.0
+anchor_top = 0.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 300.0
+offset_bottom = 60.0
+text = "HP: 100"
+
+[node name="MoneyLabel" type="Label" parent="HUD"]
+anchor_left = 0.0
+anchor_top = 0.0
+offset_left = 20.0
+offset_top = 70.0
+offset_right = 300.0
+offset_bottom = 110.0
+text = "Money: $0"
+
+[node name="ZoneLabel" type="Label" parent="HUD"]
+anchor_left = 0.0
+anchor_top = 0.0
+offset_left = 20.0
+offset_top = 120.0
+offset_right = 400.0
+offset_bottom = 160.0
+text = "Zone: Phase 0"
