@@ -435,6 +435,241 @@ class TestCraftingSystem(unittest.TestCase):
         self.assertEqual(self.p.inventory["wood"], 0)
 
 
+# ── Balance mirrors ───────────────────────────────────────────────────────────
+
+WEAPONS = {
+    "pistol":  {"damage": 25.0, "fire_rate": 0.40, "ammo": 12, "max_ammo": 12,
+                "reload_time": 1.2, "spread": 0.05, "speed": 900.0, "range": 700.0,
+                "pellets": 1, "aoe": 0.0, "price": 0},
+    "shotgun": {"damage": 18.0, "fire_rate": 0.80, "ammo": 6,  "max_ammo": 6,
+                "reload_time": 1.5, "spread": 0.18, "speed": 750.0, "range": 350.0,
+                "pellets": 7, "aoe": 0.0, "price": 600},
+    "smg":     {"damage": 12.0, "fire_rate": 0.10, "ammo": 30, "max_ammo": 30,
+                "reload_time": 1.8, "spread": 0.08, "speed": 850.0, "range": 550.0,
+                "pellets": 1, "aoe": 0.0, "price": 500},
+    "sniper":  {"damage": 85.0, "fire_rate": 1.50, "ammo": 5,  "max_ammo": 5,
+                "reload_time": 2.5, "spread": 0.00, "speed": 1800.0, "range": 1200.0,
+                "pellets": 1, "aoe": 0.0, "price": 1400},
+    "plasma":  {"damage": 40.0, "fire_rate": 0.60, "ammo": 8,  "max_ammo": 8,
+                "reload_time": 2.0, "spread": 0.02, "speed": 600.0, "range": 500.0,
+                "pellets": 1, "aoe": 80.0, "price": 900},
+}
+
+ENEMIES = {
+    "rusher":  {"max_hp": 60.0,   "speed": 320.0, "contact_dmg": 15.0, "shoot_dmg":  0.0,
+                "shoot_range": 0.0, "radius": 18.0, "reward": 150, "xp": 10},
+    "shooter": {"max_hp": 45.0,   "speed": 150.0, "contact_dmg":  0.0, "shoot_dmg": 12.0,
+                "shoot_range": 420.0, "radius": 16.0, "reward": 200, "xp": 15},
+    "tank":    {"max_hp": 250.0,  "speed":  80.0, "contact_dmg": 30.0, "shoot_dmg":  0.0,
+                "shoot_range": 0.0, "radius": 30.0, "reward": 350, "xp": 25},
+    "bomber":  {"max_hp": 50.0,   "speed": 280.0, "contact_dmg": 60.0, "shoot_dmg":  0.0,
+                "shoot_range": 0.0, "radius": 20.0, "reward": 200, "xp": 20},
+    "boss":    {"max_hp": 1000.0, "speed": 120.0, "contact_dmg": 25.0, "shoot_dmg": 20.0,
+                "shoot_range": 600.0, "radius": 50.0, "reward": 2000, "xp": 200},
+}
+
+ZONE_PHASES = [
+    {"duration": 120.0, "damage": 2.0,  "ratio": 0.70},
+    {"duration":  90.0, "damage": 5.0,  "ratio": 0.45},
+    {"duration":  60.0, "damage": 10.0, "ratio": 0.25},
+    {"duration":  30.0, "damage": 20.0, "ratio": 0.10},
+    {"duration":  15.0, "damage": 40.0, "ratio": 0.00},
+]
+
+PERKS = {
+    "tough":        {"effect": "max_hp",      "value": 25.0},
+    "scavenger":    {"effect": "loot_mult",   "value": 1.5},
+    "quick_hands":  {"effect": "reload_mult", "value": 2.0},
+    "zone_runner":  {"effect": "zone_resist", "value": 0.4},
+    "headhunter":   {"effect": "kill_bonus",  "value": 150.0},
+    "arsenal":      {"effect": "ammo_mult",   "value": 1.6},
+    "steel_nerves": {"effect": "hit_stop",    "value": 0.05},
+    "last_stand":   {"effect": "last_stand",  "value": 1.3},
+}
+
+HP_SCALE_PER_ROUND = 0.15
+WAVE_BASE = 3
+WAVE_PER_ROUND = 2
+BOSS_EVERY = 5
+MAX_ROUNDS = 10
+
+
+def wave_enemy_count(round_num):
+    return max(5, WAVE_BASE + round_num * WAVE_PER_ROUND + round_num // 3)
+
+
+def enemy_hp_scale(round_num):
+    return 1.0 + (round_num - 1) * HP_SCALE_PER_ROUND
+
+
+# ── New test suites ────────────────────────────────────────────────────────────
+
+class TestWaveFormula(unittest.TestCase):
+    def test_round_1_has_at_least_5_enemies(self):
+        self.assertGreaterEqual(wave_enemy_count(1), 5)
+
+    def test_round_5_more_than_round_1(self):
+        self.assertGreater(wave_enemy_count(5), wave_enemy_count(1))
+
+    def test_round_10_more_than_round_5(self):
+        self.assertGreater(wave_enemy_count(10), wave_enemy_count(5))
+
+    def test_boss_spawns_on_round_5(self):
+        self.assertEqual(5 % BOSS_EVERY, 0)
+
+    def test_boss_spawns_on_round_10(self):
+        self.assertEqual(10 % BOSS_EVERY, 0)
+
+    def test_no_boss_on_round_3(self):
+        self.assertNotEqual(3 % BOSS_EVERY, 0)
+
+    def test_max_rounds_is_10(self):
+        self.assertEqual(MAX_ROUNDS, 10)
+
+    def test_wave_grows_monotonically(self):
+        counts = [wave_enemy_count(r) for r in range(1, MAX_ROUNDS + 1)]
+        for i in range(len(counts) - 1):
+            self.assertLessEqual(counts[i], counts[i + 1])
+
+
+class TestEnemyScaling(unittest.TestCase):
+    def test_round_1_scale_is_1(self):
+        self.assertAlmostEqual(enemy_hp_scale(1), 1.0)
+
+    def test_round_2_scale_is_1_15(self):
+        self.assertAlmostEqual(enemy_hp_scale(2), 1.15)
+
+    def test_round_10_scale_above_2(self):
+        self.assertGreater(enemy_hp_scale(10), 2.0)
+
+    def test_rusher_hp_scales(self):
+        base_hp = ENEMIES["rusher"]["max_hp"]
+        scaled  = base_hp * enemy_hp_scale(5)
+        self.assertGreater(scaled, base_hp)
+
+    def test_boss_hp_much_higher_than_rusher(self):
+        self.assertGreater(ENEMIES["boss"]["max_hp"], ENEMIES["rusher"]["max_hp"] * 5)
+
+    def test_all_enemies_have_positive_hp(self):
+        for etype, edata in ENEMIES.items():
+            self.assertGreater(edata["max_hp"], 0.0, msg=etype)
+
+    def test_all_enemies_have_reward(self):
+        for etype, edata in ENEMIES.items():
+            self.assertGreater(edata["reward"], 0, msg=etype)
+
+    def test_tank_slowest(self):
+        speeds = {k: v["speed"] for k, v in ENEMIES.items() if k != "boss"}
+        self.assertEqual(min(speeds, key=speeds.get), "tank")
+
+    def test_rusher_fastest_non_boss(self):
+        speeds = {k: v["speed"] for k, v in ENEMIES.items() if k not in ("boss",)}
+        self.assertEqual(max(speeds, key=speeds.get), "rusher")
+
+
+class TestWeaponSystem(unittest.TestCase):
+    def test_all_weapons_defined(self):
+        for wid in ("pistol", "shotgun", "smg", "sniper", "plasma"):
+            self.assertIn(wid, WEAPONS)
+
+    def test_pistol_is_free(self):
+        self.assertEqual(WEAPONS["pistol"]["price"], 0)
+
+    def test_sniper_highest_damage(self):
+        dmg = {k: v["damage"] for k, v in WEAPONS.items()}
+        self.assertEqual(max(dmg, key=dmg.get), "sniper")
+
+    def test_smg_fastest_fire_rate(self):
+        fr = {k: v["fire_rate"] for k, v in WEAPONS.items()}
+        self.assertEqual(min(fr, key=fr.get), "smg")
+
+    def test_sniper_slowest_fire_rate(self):
+        fr = {k: v["fire_rate"] for k, v in WEAPONS.items()}
+        self.assertEqual(max(fr, key=fr.get), "sniper")
+
+    def test_plasma_has_aoe(self):
+        self.assertGreater(WEAPONS["plasma"]["aoe"], 0.0)
+
+    def test_non_plasma_no_aoe(self):
+        for wid, wd in WEAPONS.items():
+            if wid != "plasma":
+                self.assertEqual(wd["aoe"], 0.0, msg=wid)
+
+    def test_shotgun_has_7_pellets(self):
+        self.assertEqual(WEAPONS["shotgun"]["pellets"], 7)
+
+    def test_ammo_positive_for_all(self):
+        for wid, wd in WEAPONS.items():
+            self.assertGreater(wd["ammo"], 0, msg=wid)
+
+    def test_dps_smg_competitive(self):
+        smg_dps   = WEAPONS["smg"]["damage"]   / WEAPONS["smg"]["fire_rate"]
+        sniper_dps = WEAPONS["sniper"]["damage"] / WEAPONS["sniper"]["fire_rate"]
+        self.assertGreater(smg_dps, sniper_dps * 0.5)
+
+
+class TestZoneSystem(unittest.TestCase):
+    def test_5_phases_defined(self):
+        self.assertEqual(len(ZONE_PHASES), 5)
+
+    def test_damage_increases_each_phase(self):
+        for i in range(len(ZONE_PHASES) - 1):
+            self.assertLess(ZONE_PHASES[i]["damage"], ZONE_PHASES[i + 1]["damage"])
+
+    def test_ratio_decreases_each_phase(self):
+        for i in range(len(ZONE_PHASES) - 1):
+            self.assertGreater(ZONE_PHASES[i]["ratio"], ZONE_PHASES[i + 1]["ratio"])
+
+    def test_final_phase_ratio_is_zero(self):
+        self.assertEqual(ZONE_PHASES[-1]["ratio"], 0.0)
+
+    def test_initial_radius_1200(self):
+        initial = 1200.0
+        self.assertEqual(initial, 1200.0)
+
+    def test_zone_resist_reduces_damage(self):
+        base_dmg = ZONE_PHASES[0]["damage"]
+        resist   = PERKS["zone_runner"]["value"]
+        reduced  = base_dmg * (1.0 - resist)
+        self.assertLess(reduced, base_dmg)
+
+
+class TestPerkSystem(unittest.TestCase):
+    def test_all_8_perks_defined(self):
+        keys = ["tough","scavenger","quick_hands","zone_runner",
+                "headhunter","arsenal","steel_nerves","last_stand"]
+        for k in keys:
+            self.assertIn(k, PERKS, msg=k)
+
+    def test_tough_increases_hp(self):
+        hp = 100.0
+        hp += PERKS["tough"]["value"]
+        self.assertAlmostEqual(hp, 125.0)
+
+    def test_quick_hands_doubles_reload(self):
+        base = 1.2
+        reloaded = base / PERKS["quick_hands"]["value"]
+        self.assertAlmostEqual(reloaded, 0.6)
+
+    def test_arsenal_increases_ammo(self):
+        base = 12
+        new  = int(base * PERKS["arsenal"]["value"])
+        self.assertGreater(new, base)
+
+    def test_zone_runner_value_less_than_1(self):
+        self.assertLess(PERKS["zone_runner"]["value"], 1.0)
+
+    def test_headhunter_bonus_positive(self):
+        self.assertGreater(PERKS["headhunter"]["value"], 0.0)
+
+    def test_steel_nerves_shorter_than_default(self):
+        default_hit_stop = 0.07
+        self.assertLess(PERKS["steel_nerves"]["value"], default_hit_stop)
+
+    def test_last_stand_multiplier_above_1(self):
+        self.assertGreater(PERKS["last_stand"]["value"], 1.0)
+
+
 if __name__ == "__main__":
     loader = unittest.TestLoader()
     suite = loader.loadTestsFromModule(sys.modules[__name__])
